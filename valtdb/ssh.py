@@ -2,6 +2,8 @@
 SSH support for ValtDB
 """
 import os
+import re
+import shlex
 import paramiko
 from typing import Optional, Dict, Any, Tuple
 from pathlib import Path
@@ -49,13 +51,16 @@ class SSHClient:
         self._client: Optional[paramiko.SSHClient] = None
 
     def connect(self):
-        """Establish SSH connection"""
+        """Establish SSH connection with host key verification"""
         if self._client is not None:
             return
 
         try:
             self._client = paramiko.SSHClient()
-            self._client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            self._client.load_system_host_keys()
+            known_hosts = os.path.expanduser('~/.ssh/known_hosts')
+            if os.path.exists(known_hosts):
+                self._client.load_host_keys(known_hosts)
 
             connect_kwargs = {
                 "hostname": self.config.hostname,
@@ -97,16 +102,26 @@ class SSHClient:
             self._client = None
 
     def execute_command(self, command: str) -> Tuple[str, str, int]:
-        """Execute command over SSH"""
+        """Execute command over SSH with input sanitization"""
         if not self._client:
             self.connect()
 
+        # Sanitize command input
+        if not self._is_safe_command(command):
+            raise ValtDBError("Command contains unsafe characters")
+
+        # Split command into arguments and escape them
+        args = shlex.split(command)
+        safe_command = " ".join(shlex.quote(arg) for arg in args)
+
         try:
-            stdin, stdout, stderr = self._client.exec_command(command)
+            stdin, stdout, stderr = self._client.exec_command(safe_command)
             exit_status = stdout.channel.recv_exit_status()
             output = stdout.read().decode().strip()
             error = stderr.read().decode().strip()
             return output, error, exit_status
+        except paramiko.SSHException as e:
+            raise ValtDBError(f"Failed to execute command: {str(e)}")
         except Exception as e:
             raise ValtDBError(f"Failed to execute command: {str(e)}")
 
@@ -133,6 +148,27 @@ class SSHClient:
             sftp.close()
         except Exception as e:
             raise ValtDBError(f"Failed to download file: {str(e)}")
+
+    def _is_safe_command(self, command: str) -> bool:
+        """Check if command contains unsafe characters or patterns"""
+        # List of unsafe patterns
+        unsafe_patterns = [
+            r'[|&;$]',  # Shell metacharacters
+            r'`',       # Backticks
+            r'>',       # Redirections
+            r'<',
+            r'\$\(',    # Command substitution
+            r'\$\{',    # Variable expansion
+            r'\\',      # Escapes
+            r'[\n\r]'   # Newlines
+        ]
+
+        # Check for unsafe patterns
+        for pattern in unsafe_patterns:
+            if re.search(pattern, command):
+                return False
+
+        return True
 
     def __enter__(self):
         """Context manager entry"""
