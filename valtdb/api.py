@@ -341,8 +341,8 @@ class ValtDB:
                 if isinstance(config, str):
                     schema_dict[name] = config
                 elif isinstance(config, dict):
-                    schema_dict[name] = config.get('type', config.get('field_type', 'str'))
-        
+                    schema_dict[name] = config.get("type", config.get("field_type", "str"))
+
             table = self.current_db.table(name, schema_dict)
         else:
             table = self.current_db.get_table(name)

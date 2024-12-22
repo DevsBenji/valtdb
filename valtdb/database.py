@@ -51,13 +51,15 @@ class Database:
                             name=table_name,
                             table_data=table_data,
                             keypair=(
-                                self._encryption_manager.keypair if self._encryption_manager else None
+                                self._encryption_manager.keypair
+                                if self._encryption_manager
+                                else None
                             ),
                         )
                     except Exception as e:
                         raise ValtDBError(f"Failed to load table {table_name}: {str(e)}")
 
-    def table(self, name: str, schema_dict: Optional[Dict[str, str]] = None) -> 'Table':
+    def table(self, name: str, schema_dict: Optional[Dict[str, str]] = None) -> "Table":
         """
         Create or get a table.
 
@@ -83,38 +85,39 @@ class Database:
                 "type": field_type,
                 "required": False,
                 "unique": False,
-                "encrypted": False
+                "encrypted": False,
             }
 
         # Create table data structure
-        table_data = {
-            "schema": full_schema_dict,
-            "data": []
-        }
+        table_data = {"schema": full_schema_dict, "data": []}
 
         # Create and store the table
         self._tables[name] = Table(
-            name=name, 
-            table_data=table_data, 
-            keypair=self._encryption_manager.generate_keypair() if self._encryption_manager else None
+            name=name,
+            table_data=table_data,
+            keypair=(
+                self._encryption_manager.generate_keypair() if self._encryption_manager else None
+            ),
         )
 
         return self._tables[name]
 
-    def create_table(self, name: str, schema: Union[Dict[str, str], Schema, Dict[str, Any]]) -> Table:
+    def create_table(
+        self, name: str, schema: Union[Dict[str, str], Schema, Dict[str, Any]]
+    ) -> Table:
         """
         Create a new table.
-        
+
         Args:
             name: Name of the table
             schema: Schema for the table (can be a dictionary, Schema object, or SchemaField)
-        
+
         Returns:
             Table instance
         """
         if name in self._tables:
             raise ValtDBError(f"Table {name} already exists")
-        
+
         # Convert schema to dictionary of field types
         if isinstance(schema, Schema):
             schema_dict = {field.name: field.field_type.value for field in schema.fields}
@@ -127,12 +130,14 @@ class Database:
                     schema_dict[field_name] = field_def
                 elif isinstance(field_def, dict):
                     # More complex definition like {"name": {"type": "str", "unique": True}}
-                    schema_dict[field_name] = field_def.get('type', field_def.get('field_type', 'str'))
+                    schema_dict[field_name] = field_def.get(
+                        "type", field_def.get("field_type", "str")
+                    )
                 else:
                     raise ValtDBError(f"Invalid schema definition for field {field_name}")
         else:
             raise ValtDBError(f"Invalid schema type: {type(schema)}")
-        
+
         return self.table(name, schema_dict)
 
     def save(self):
