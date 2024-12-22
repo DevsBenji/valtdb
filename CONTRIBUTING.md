@@ -22,7 +22,7 @@
 1. Форкните репозиторий
 2. Клонируйте свой форк:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/valtdb.git
+   git clone https://github.com/DevsBenji/valtdb.git
    cd valtdb
    ```
 3. Создайте виртуальное окружение:
