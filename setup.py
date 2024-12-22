@@ -12,7 +12,7 @@ setup(
     name="valtdb",
     version="1.0.0",
     author="DevsBenji",
-    author_email="DevsBenji@valtdb.com",
+    author_email="benji.development@protonmail.com",
     description="A secure and flexible database library with encryption and remote access",
     long_description=long_description,
     long_description_content_type="text/markdown",
