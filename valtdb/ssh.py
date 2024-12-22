@@ -1,38 +1,52 @@
 """
-SSH connection management for ValtDB.
+SSH connection and remote database management.
 """
 
 import os
 import re
 import shlex
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict, Any
 import paramiko
 from paramiko.client import SSHClient
 from paramiko.config import SSH_PORT
+from .database import Database
 
-class SSHConnection:
-    """Manages SSH connections for remote database operations."""
-    
-    def __init__(self, 
-                 hostname: str, 
-                 username: str,
-                 password: Optional[str] = None,
-                 key_filename: Optional[str] = None,
-                 port: int = SSH_PORT):
-        """Initialize SSH connection.
+class SSHConfig:
+    """Configuration for SSH connection."""
+    def __init__(
+        self,
+        hostname: str,
+        username: str,
+        password: Optional[str] = None,
+        key_filename: Optional[str] = None,
+        port: int = 22
+    ):
+        """
+        Initialize SSH configuration.
         
         Args:
-            hostname: Remote host to connect to
-            username: Username for authentication
-            password: Password for authentication (optional)
-            key_filename: Path to private key file (optional)
-            port: SSH port number (default: 22)
+            hostname: Hostname or IP address of the remote server
+            username: Username for SSH authentication
+            password: Optional password for authentication
+            key_filename: Optional path to private key file
+            port: SSH port (default: 22)
         """
         self.hostname = hostname
         self.username = username
         self.password = password
         self.key_filename = key_filename
         self.port = port
+
+class SSHConnection:
+    """Manages SSH connections for remote database operations."""
+    
+    def __init__(self, config: SSHConfig):
+        """Initialize SSH connection.
+        
+        Args:
+            config: SSH configuration
+        """
+        self.config = config
         self._client: Optional[SSHClient] = None
         
     def connect(self) -> None:
@@ -50,14 +64,14 @@ class SSHConnection:
             
             try:
                 self._client.connect(
-                    hostname=self.hostname,
-                    username=self.username,
-                    password=self.password,
-                    key_filename=self.key_filename,
-                    port=self.port
+                    hostname=self.config.hostname,
+                    username=self.config.username,
+                    password=self.config.password,
+                    key_filename=self.config.key_filename,
+                    port=self.config.port
                 )
             except paramiko.SSHException as e:
-                raise ConnectionError(f"Failed to connect to {self.hostname}: {str(e)}")
+                raise ConnectionError(f"Failed to connect to {self.config.hostname}: {str(e)}")
             
     def disconnect(self) -> None:
         """Close SSH connection."""
@@ -187,3 +201,40 @@ class SSHConnection:
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Context manager exit."""
         self.disconnect()
+
+class RemoteDatabase(Database):
+    """Remote database management via SSH."""
+    def __init__(
+        self, 
+        ssh_config: SSHConfig, 
+        remote_path: str, 
+        local_path: Optional[str] = None
+    ):
+        """
+        Initialize remote database connection.
+        
+        Args:
+            ssh_config: SSH connection configuration
+            remote_path: Path to the database on the remote server
+            local_path: Optional local path to sync or cache the database
+        """
+        super().__init__(remote_path)
+        self.ssh_config = ssh_config
+        self.remote_path = remote_path
+        self.local_path = local_path or remote_path
+        self._ssh_connection = SSHConnection(ssh_config)
+
+    def connect(self):
+        """Establish SSH connection and prepare database."""
+        self._ssh_connection.connect()
+        # Additional connection and database preparation logic
+
+    def sync(self):
+        """Synchronize remote database with local cache."""
+        # Implement file transfer logic using SFTP
+        pass
+
+    def close(self):
+        """Close SSH connection and database."""
+        self._ssh_connection.disconnect()
+        super().close()

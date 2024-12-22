@@ -21,7 +21,8 @@ class SchemaField:
     def __init__(
         self,
         name: str,
-        field_type: DataType,
+        field_type: Optional[DataType] = None,
+        data_type: Optional[DataType] = None,
         required: bool = True,
         unique: bool = False,
         default: Any = None,
@@ -30,10 +31,24 @@ class SchemaField:
         min_length: Optional[int] = None,
         max_length: Optional[int] = None,
         pattern: Optional[str] = None,
-        choices: Optional[List[Any]] = None
+        choices: Optional[List[Any]] = None,
+        encrypted: bool = False
     ):
+        # Prefer field_type, but fall back to data_type for backward compatibility
         self.name = name
-        self.field_type = field_type
+        self.field_type = field_type or data_type
+        if self.field_type is None:
+            raise ValtDBError(f"Field type must be specified for field {name}")
+        
+        # If encrypted flag is set, modify field type to encrypted variant
+        if encrypted:
+            encrypted_type_name = f"ENCRYPTED_{self.field_type.name.lower()}"
+            try:
+                self.field_type = DataType[encrypted_type_name]
+            except KeyError:
+                # If specific encrypted type doesn't exist, use a generic encrypted type
+                self.field_type = DataType.ENCRYPTED_STR
+        
         self.required = required
         self.unique = unique
         self.default = default
@@ -65,7 +80,7 @@ class SchemaField:
         """Create field from dictionary"""
         return cls(
             name=data["name"],
-            field_type=DataType(data["type"]),
+            field_type=DataType(data.get("type", data.get("data_type"))),
             required=data.get("required", True),
             unique=data.get("unique", False),
             default=data.get("default"),

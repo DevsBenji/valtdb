@@ -4,7 +4,7 @@ Encryption and decryption utilities for ValtDB.
 import json
 import ast
 from enum import Enum
-from typing import Any, Dict, Union
+from typing import Any, Dict, Union, Optional
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.fernet import Fernet
@@ -13,6 +13,7 @@ from ..keypair import KeyPair
 class EncryptionAlgorithm(Enum):
     """Supported encryption algorithms"""
     RSA = "rsa"
+    AES = "aes"
 
 class HashAlgorithm(Enum):
     """Supported hash algorithms"""
@@ -23,6 +24,10 @@ class KeyPair:
     def __init__(self, private_key: Any = None, public_key: Any = None):
         self.private_key = private_key
         self.public_key = public_key
+
+    @property
+    def has_private_key(self):
+        return self.private_key is not None
 
 def generate_keypair() -> KeyPair:
     """Generate a new key pair.
@@ -142,3 +147,33 @@ def verify_hash(data: Dict[str, Any], hash_value: str) -> bool:
         bool: True if hash matches, False otherwise
     """
     return hash_data(data) == hash_value
+
+class EncryptionManager:
+    """Manage encryption and decryption operations"""
+    def __init__(
+        self, 
+        keypair: Optional[KeyPair] = None,
+        encryption_algorithm: Optional[EncryptionAlgorithm] = EncryptionAlgorithm.RSA,
+        hash_algorithm: Optional[HashAlgorithm] = HashAlgorithm.SHA256
+    ):
+        """
+        Initialize encryption manager.
+        
+        Args:
+            keypair: Optional KeyPair for encryption and decryption
+            encryption_algorithm: Encryption algorithm to use
+            hash_algorithm: Hash algorithm to use
+        """
+        self.keypair = keypair or generate_keypair()
+        self.encryption_algorithm = encryption_algorithm
+        self.hash_algorithm = hash_algorithm
+
+    def encrypt(self, data: Union[str, Dict[str, Any]]) -> bytes:
+        """Encrypt data using the public key"""
+        return encrypt_data(data, self.keypair.public_key)
+
+    def decrypt(self, encrypted_data: bytes) -> Union[str, Dict[str, Any]]:
+        """Decrypt data using the private key"""
+        if not self.keypair.has_private_key:
+            raise ValueError("Cannot decrypt without private key")
+        return decrypt_data(encrypted_data, self.keypair.private_key)
