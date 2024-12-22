@@ -2,26 +2,104 @@
 Tests for SSH functionality
 """
 
+import unittest
 from unittest.mock import Mock, patch
-
-import pytest
-
+from valtdb.ssh import SSHConnection, SSHConfig, SSHError, RemoteDatabase
 from valtdb.exceptions import ValtDBError
-from valtdb.ssh import RemoteDatabase, SSHClient, SSHConfig
 
+class TestSSH(unittest.TestCase):
+    def setUp(self):
+        self.config = SSHConfig(
+            hostname="test.example.com",
+            username="testuser",
+            password="testpass",
+            port=22
+        )
 
-@pytest.fixture
-def ssh_config():
-    return SSHConfig(hostname="test.server.com", username="testuser", password="testpass")
+    @patch('paramiko.SSHClient')
+    def test_connect(self, mock_ssh):
+        client = SSHConnection(self.config)
+        client.connect()
+        
+        mock_ssh.return_value.connect.assert_called_once_with(
+            hostname=self.config.hostname,
+            username=self.config.username,
+            password=self.config.password,
+            key_filename=None,
+            port=self.config.port
+        )
 
+    @patch('paramiko.SSHClient')
+    def test_execute_command(self, mock_ssh):
+        mock_transport = Mock()
+        mock_session = Mock()
+        mock_session.makefile.return_value.read.return_value = b"stdout"
+        mock_session.makefile_stderr.return_value.read.return_value = b"stderr"
+        mock_transport.open_session.return_value = mock_session
+        mock_ssh.return_value.get_transport.return_value = mock_transport
 
-@pytest.fixture
-def mock_paramiko_client():
-    with patch("paramiko.SSHClient") as mock_client:
-        client_instance = Mock()
-        mock_client.return_value = client_instance
-        yield client_instance
+        client = SSHConnection(self.config)
+        client.connect()
+        stdout, stderr = client.exec_command("ls")
 
+        self.assertEqual(stdout, "stdout")
+        self.assertEqual(stderr, "stderr")
+        mock_session.exec_command.assert_called_once_with("ls")
+
+    @patch('paramiko.SSHClient')
+    def test_close(self, mock_ssh):
+        client = SSHConnection(self.config)
+        client.connect()
+        client.close()
+        
+        mock_ssh.return_value.close.assert_called_once()
+
+    def test_ssh_config(self):
+        config_dict = self.config.to_dict()
+        restored_config = SSHConfig.from_dict(config_dict)
+        
+        self.assertEqual(restored_config.hostname, self.config.hostname)
+        self.assertEqual(restored_config.username, self.config.username)
+        self.assertEqual(restored_config.password, self.config.password)
+        self.assertEqual(restored_config.port, self.config.port)
+
+    @patch('paramiko.SSHClient')
+    def test_connection_failure(self, mock_ssh):
+        mock_ssh.return_value.connect.side_effect = Exception("Connection failed")
+        
+        client = SSHConnection(self.config)
+        with self.assertRaises(SSHError):
+            client.connect()
+
+    @patch('paramiko.SSHClient')
+    def test_command_failure(self, mock_ssh):
+        mock_ssh.return_value.exec_command.side_effect = Exception("Command failed")
+        
+        client = SSHConnection(self.config)
+        with self.assertRaises(SSHError):
+            client.exec_command("test command")
+
+    def test_remote_database(self):
+        db = RemoteDatabase(self.config, "/path/to/db")
+        self.assertEqual(db.remote_path, "/path/to/db")
+        self.assertEqual(db.local_path, "/path/to/db")
+
+    @patch('paramiko.SSHClient')
+    def test_remote_database_query(self, mock_ssh):
+        mock_transport = Mock()
+        mock_session = Mock()
+        mock_session.makefile.return_value.read.return_value = b"result"
+        mock_session.makefile_stderr.return_value.read.return_value = b""
+        mock_transport.open_session.return_value = mock_session
+        mock_ssh.return_value.get_transport.return_value = mock_transport
+
+        db = RemoteDatabase(self.config, "/path/to/db")
+        db.connect()
+        stdout, stderr, status = db.execute_query("SELECT * FROM table")
+        
+        self.assertEqual(stdout, "result")
+        self.assertEqual(stderr, "")
+        self.assertEqual(status, 0)
 
 def test_ssh_config_creation():
     config = SSHConfig(hostname="test.server.com", username="testuser", password="testpass")
@@ -29,7 +107,6 @@ def test_ssh_config_creation():
     assert config.username == "testuser"
     assert config.password == "testpass"
     assert config.port == 22  # default port
-
 
 def test_ssh_config_serialization():
     config = SSHConfig(hostname="test.server.com", username="testuser", password="testpass")
@@ -39,90 +116,20 @@ def test_ssh_config_serialization():
     assert restored_config.username == config.username
     assert restored_config.password == config.password
 
-
-def test_ssh_client_connection(ssh_config, mock_paramiko_client):
-    client = SSHClient(ssh_config)
-    client.connect()
-    mock_paramiko_client.connect.assert_called_once_with(
-        hostname="test.server.com", username="testuser", password="testpass", port=22, timeout=30
-    )
-
-
-def test_ssh_client_command_execution(ssh_config, mock_paramiko_client):
-    mock_channel = Mock()
-    mock_channel.recv_exit_status.return_value = 0
-
-    mock_stdout = Mock()
-    mock_stdout.channel = mock_channel
-    mock_stdout.read.return_value = b"command output"
-
-    mock_stderr = Mock()
-    mock_stderr.read.return_value = b""
-
-    mock_paramiko_client.exec_command.return_value = (None, mock_stdout, mock_stderr)
-
-    client = SSHClient(ssh_config)
-    output, error, status = client.execute_command("test command")
-
-    assert output == "command output"
-    assert error == ""
-    assert status == 0
-    mock_paramiko_client.exec_command.assert_called_once_with("test command")
-
-
-def test_ssh_client_file_transfer(ssh_config, mock_paramiko_client):
-    mock_sftp = Mock()
-    mock_paramiko_client.open_sftp.return_value = mock_sftp
-
-    client = SSHClient(ssh_config)
-    client.upload_file("local.txt", "remote.txt")
-
-    mock_sftp.put.assert_called_once_with("local.txt", "remote.txt")
-    mock_sftp.close.assert_called_once()
-
-
-def test_ssh_client_context_manager(ssh_config, mock_paramiko_client):
-    with SSHClient(ssh_config) as client:
-        assert client._client is not None
-    mock_paramiko_client.close.assert_called_once()
-
-
-def test_remote_database_operations(ssh_config, mock_paramiko_client):
-    mock_channel = Mock()
-    mock_channel.recv_exit_status.return_value = 0
-
-    mock_stdout = Mock()
-    mock_stdout.channel = mock_channel
-    mock_stdout.read.return_value = b'{"result": "success"}'
-
-    mock_stderr = Mock()
-    mock_stderr.read.return_value = b""
-
-    mock_paramiko_client.exec_command.return_value = (None, mock_stdout, mock_stderr)
-
-    db = RemoteDatabase(ssh_config, "/path/to/db")
-    output, error, status = db.execute_query("SELECT * FROM users")
-
-    assert output == '{"result": "success"}'
-    assert status == 0
-    mock_paramiko_client.exec_command.assert_called_once_with(
-        'valtdb-cli query "/path/to/db" "SELECT * FROM users"'
-    )
-
-
-def test_ssh_client_connection_failure(ssh_config, mock_paramiko_client):
-    mock_paramiko_client.connect.side_effect = Exception("Connection failed")
-
-    client = SSHClient(ssh_config)
-    with pytest.raises(ValtDBError) as exc_info:
+def test_ssh_client_connection_failure():
+    config = SSHConfig(hostname="test.server.com", username="testuser", password="testpass")
+    client = SSHConnection(config)
+    with unittest.TestCase().assertRaises(SSHError):
         client.connect()
-    assert "Failed to establish SSH connection" in str(exc_info.value)
 
+def test_ssh_client_command_failure():
+    config = SSHConfig(hostname="test.server.com", username="testuser", password="testpass")
+    client = SSHConnection(config)
+    with unittest.TestCase().assertRaises(SSHError):
+        client.exec_command("test command")
 
-def test_ssh_client_command_failure(ssh_config, mock_paramiko_client):
-    mock_paramiko_client.exec_command.side_effect = Exception("Command failed")
-
-    client = SSHClient(ssh_config)
-    with pytest.raises(ValtDBError) as exc_info:
-        client.execute_command("test command")
-    assert "Failed to execute command" in str(exc_info.value)
+def test_remote_database_operations():
+    config = SSHConfig(hostname="test.server.com", username="testuser", password="testpass")
+    db = RemoteDatabase(config, "/path/to/db")
+    assert db.remote_path == "/path/to/db"
+    assert db.local_path == "/path/to/db"

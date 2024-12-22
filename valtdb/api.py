@@ -10,15 +10,16 @@ from datetime import date, datetime
 from enum import Enum
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, cast, Type
 
 from .auth import RBAC, AuthManager
-from .crypto.encryption import EncryptionAlgorithm, EncryptionManager, HashAlgorithm
+from .crypto.encryption import EncryptionAlgorithm, EncryptionManager, HashAlgorithm, KeyPair
 from .database import Database
 from .exceptions import ValtDBError
-from .query import Operator, Query
 from .schema import DataType, Schema, SchemaField
 from .ssh import RemoteDatabase, SSHConfig
+from .query import Query, Operator
+from .table import Table
 
 logger = logging.getLogger(__name__)
 
@@ -31,15 +32,15 @@ class SortOrder(Enum):
 class QueryBuilder:
     """Enhanced query builder with intuitive methods"""
 
-    def __init__(self, table):
-        self._table = table
-        self._query = Query()
-        self._selected_fields = set()
-        self._group_by = []
-        self._order_by = []
-        self._limit = None
-        self._offset = None
-        self._joins = []
+    def __init__(self, table: 'Table'):
+        self.table = table
+        self.query = Query()
+        self._selected_fields: set = set()
+        self._group_by: List[str] = []
+        self._order_by: List[tuple] = []
+        self._limit: Optional[int] = None
+        self._offset: Optional[int] = None
+        self._joins: List[Dict[str, Any]] = []
 
     def select(self, *fields) -> "QueryBuilder":
         """Select specific fields"""
@@ -51,39 +52,40 @@ class QueryBuilder:
         for field, value in conditions.items():
             if isinstance(value, tuple):
                 operator, val = value
-                self._query.filter(field, Operator[operator], val)
+                self.query.filter(field, Operator(operator), val)
             else:
-                self._query.filter(field, Operator.EQ, value)
+                self.query.filter(field, Operator.EQUALS, value)
         return self
 
     def where_in(self, field: str, values: List[Any]) -> "QueryBuilder":
         """Add WHERE IN condition"""
-        self._query.filter(field, Operator.IN, values)
+        self.query.filter(field, Operator.IN, values)
         return self
 
     def where_not_in(self, field: str, values: List[Any]) -> "QueryBuilder":
         """Add WHERE NOT IN condition"""
-        self._query.filter(field, Operator.NOT_IN, values)
+        self.query.filter(field, Operator.NOT_IN, values)
         return self
 
     def where_between(self, field: str, start: Any, end: Any) -> "QueryBuilder":
         """Add WHERE BETWEEN condition"""
-        self._query.filter(field, Operator.BETWEEN, (start, end))
+        self.query.filter(field, Operator.GREATER_THAN, start)
+        self.query.filter(field, Operator.LESS_THAN, end)
         return self
 
     def where_null(self, field: str) -> "QueryBuilder":
         """Add WHERE IS NULL condition"""
-        self._query.filter(field, Operator.IS_NULL, None)
+        self.query.filter(field, Operator.EQUALS, None)
         return self
 
     def where_not_null(self, field: str) -> "QueryBuilder":
         """Add WHERE IS NOT NULL condition"""
-        self._query.filter(field, Operator.IS_NOT_NULL, None)
+        self.query.filter(field, Operator.NOT_EQUALS, None)
         return self
 
     def where_like(self, field: str, pattern: str) -> "QueryBuilder":
         """Add WHERE LIKE condition"""
-        self._query.filter(field, Operator.LIKE, pattern)
+        self.query.filter(field, Operator.CONTAINS, pattern)
         return self
 
     def or_where(self, **conditions) -> "QueryBuilder":
@@ -91,9 +93,9 @@ class QueryBuilder:
         for field, value in conditions.items():
             if isinstance(value, tuple):
                 operator, val = value
-                self._query.or_filter(field, Operator[operator], val)
+                self.query.or_filter(field, Operator(operator), val)
             else:
-                self._query.or_filter(field, Operator.EQ, value)
+                self.query.or_filter(field, Operator.EQUALS, value)
         return self
 
     def group_by(self, *fields) -> "QueryBuilder":
@@ -118,17 +120,35 @@ class QueryBuilder:
 
     def join(self, table: str, on: Dict[str, str]) -> "QueryBuilder":
         """Add JOIN clause"""
-        self._joins.append(("JOIN", table, on))
+        self._joins.append({
+            "type": "JOIN",
+            "table": table,
+            "on": on
+        })
         return self
 
     def left_join(self, table: str, on: Dict[str, str]) -> "QueryBuilder":
         """Add LEFT JOIN clause"""
-        self._joins.append(("LEFT JOIN", table, on))
+        self._joins.append({
+            "type": "LEFT JOIN",
+            "table": table,
+            "on": on
+        })
         return self
 
     def get(self) -> List[Dict[str, Any]]:
         """Execute query and return results"""
-        return self._table.select(self._query)
+        return self.table.select(self.query)
+
+    def update(self, data: Dict[str, Any]) -> None:
+        """Update records"""
+        self.table.update(self.query, data)
+        return None
+
+    def delete(self) -> None:
+        """Delete records"""
+        self.table.delete(self.query)
+        return None
 
     def first(self) -> Optional[Dict[str, Any]]:
         """Get first result"""
@@ -142,264 +162,141 @@ class QueryBuilder:
 
     def count(self) -> int:
         """Get count of records"""
-        return len(self.get())
-
-    def sum(self, field: str) -> Union[int, float]:
-        """Get sum of field"""
-        results = self.get()
-        return sum(r[field] for r in results)
-
-    def avg(self, field: str) -> float:
-        """Get average of field"""
-        results = self.get()
-        return sum(r[field] for r in results) / len(results) if results else 0
-
-    def min(self, field: str) -> Any:
-        """Get minimum value of field"""
-        results = self.get()
-        return min(r[field] for r in results) if results else None
-
-    def max(self, field: str) -> Any:
-        """Get maximum value of field"""
-        results = self.get()
-        return max(r[field] for r in results) if results else None
-
-    def pluck(self, field: str) -> List[Any]:
-        """Get list of values for a field"""
-        results = self.get()
-        return [r[field] for r in results]
-
-    def chunk(self, size: int, callback: Callable[[List[Dict[str, Any]]], None]):
-        """Process results in chunks"""
-        offset = 0
-        while True:
-            results = self.limit(size).offset(offset).get()
-            if not results:
-                break
-            callback(results)
-            offset += size
-
-    def paginate(
-        self, page: int = 1, per_page: int = 10
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-        """Get paginated results"""
-        total = self.count()
-
-        results = self.limit(per_page).offset((page - 1) * per_page).get()
-
-        return results, {
-            "total": total,
-            "per_page": per_page,
-            "current_page": page,
-            "last_page": (total + per_page - 1) // per_page,
-            "from": (page - 1) * per_page + 1,
-            "to": (page - 1) * per_page + len(results),
-        }
-
-    def get(self):
-        """Execute the query and return results"""
-        return self._table.all()
-
-    def __len__(self):
-        """Return the number of results"""
-        return len(self.get())
-
-
-class Table:
-    """Enhanced table interface"""
-
-    def __init__(self, db_table, name: str):
-        self._table = db_table
-        self.name = name
-
-    def query(self) -> QueryBuilder:
-        """Create new query builder"""
-        return QueryBuilder(self._table)
-
-    def all(self) -> List[Dict[str, Any]]:
-        """Get all records"""
-        return self.query().get()
-
-    def find(self, id: Any) -> Optional[Dict[str, Any]]:
-        """Find record by ID"""
-        return self.query().where(id=id).first()
-
-    def find_or_fail(self, id: Any) -> Dict[str, Any]:
-        """Find record by ID or raise error"""
-        result = self.find(id)
-        if not result:
-            raise ValtDBError(f"Record with id {id} not found")
-        return result
-
-    def first_or_create(
-        self, search: Dict[str, Any], create: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """Get first record or create it"""
-        result = self.query().where(**search).first()
-        if result:
-            return result
-
-        data = {**search, **(create or {})}
-        self.insert(data)
-        return self.query().where(**search).first()
-
-    def update_or_create(self, search: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
-        """Update record or create it"""
-        result = self.query().where(**search).first()
-        if result:
-            self.query().where(**search).update(update)
-            return self.query().where(**search).first()
-
-        data = {**search, **update}
-        self.insert(data)
-        return self.query().where(**search).first()
-
-    def insert(
-        self, data: Union[Dict[str, Any], List[Dict[str, Any]]]
-    ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
-        """Insert record(s)"""
-        if isinstance(data, list):
-            for record in data:
-                self._table.insert(record)
-            return data
-        else:
-            self._table.insert(data)
-            return data
-
-    def insert_get_id(self, data: Dict[str, Any]) -> Any:
-        """Insert record and return ID"""
-        self.insert(data)
-        return self.query().where(**data).first()["id"]
-
-    def bulk_insert(self, data: List[Dict[str, Any]], chunk_size: int = 1000):
-        """Insert records in chunks"""
-        for i in range(0, len(data), chunk_size):
-            chunk = data[i : i + chunk_size]
-            self.insert(chunk)
-
-    def update(self, data: Dict[str, Any]) -> int:
-        """Update records"""
-        return self._table.update(self._query, data)
-
-    def delete(self) -> int:
-        """Delete records"""
-        return self._table.delete(self._query)
-
-    def truncate(self):
-        """Delete all records"""
-        self.query().delete()
-
-    def select(self, *fields):
-        """Select records from the table"""
-        query_builder = self.query()
-        if fields:
-            query_builder.select(*fields)
-        return query_builder.get()
-
-    def where(self, **conditions):
-        """Filter records by conditions"""
-        query_builder = self.query()
-        query_builder.where(**conditions)
-        return query_builder
+        return self.table.count(self.query)
 
 
 class ValtDB:
-    """Main ValtDB interface with enhanced features"""
-
+    """Main ValtDB interface."""
+    
     def __init__(self, path: str):
+        """Initialize ValtDB instance."""
         self.base_path = Path(path)
         self.base_path.mkdir(parents=True, exist_ok=True)
-        self.current_db = None
-        self.current_table = None
-        self._encryption = None
+        self.current_db: Optional[Database] = None
+        self.current_table: Optional['Table'] = None
+        self._encryption: Optional[EncryptionManager] = None
 
-    def db(self, name: str, encryption: Optional[Dict] = None) -> "ValtDB":
-        """Select or create database"""
-        db_path = self.base_path / name
+    def generate_private_key(self, password: str) -> Any:
+        """Generate a private key from a password."""
+        # Placeholder implementation
+        return password.encode()
 
-        if not db_path.exists():
-            if encryption:
-                self._encryption = EncryptionManager(
-                    encryption_algorithm=EncryptionAlgorithm[encryption.get("algorithm", "AES")],
-                    hash_algorithm=HashAlgorithm[encryption.get("hash_algorithm", "SHA256")],
-                )
-            self.current_db = Database(str(db_path), encryption_manager=self._encryption)
-        else:
-            self.current_db = Database(str(db_path))
+    def derive_public_key(self, private_key: Any) -> Any:
+        """Derive a public key from a private key."""
+        # Placeholder implementation
+        return private_key
 
-        return self
+    def connect(self, password: Optional[str] = None) -> None:
+        """Connect to database."""
+        if password:
+            private_key = self.generate_private_key(password)
+            public_key = self.derive_public_key(private_key)
+            self._encryption = EncryptionManager(KeyPair(private_key, public_key))
+        self.current_db = Database(str(self.base_path), encryption_manager=self._encryption)
+        return None
 
-    def table(self, name: str, schema: Optional[Dict] = None) -> Table:
-        """Select or create table"""
+    def close(self) -> None:
+        """Close database connection."""
+        if self.current_db:
+            if hasattr(self.current_db, 'close'):
+                self.current_db.close()
+            self.current_db = None
+            self.current_table = None
+        return None
+
+    def create_table(self, name: str, schema: Dict[str, Any]) -> None:
+        """Create a new table."""
         if not self.current_db:
-            raise ValtDBError("No database selected")
+            raise ValtDBError("Not connected to database")
+        if hasattr(self.current_db, 'create_table'):
+            self.current_db.create_table(name, schema)
+        return None  # Explicitly return None if conditions are not met
 
-        if schema:
-            # Convert schema to a dictionary of field types
-            schema_dict = {}
-            for name, config in schema.items():
-                if isinstance(config, str):
-                    schema_dict[name] = config
-                elif isinstance(config, dict):
-                    schema_dict[name] = config.get("type", config.get("field_type", "str"))
-
-            table = self.current_db.table(name, schema_dict)
-        else:
+    def get_table(self, name: str) -> 'Table':
+        """Get table by name."""
+        if not self.current_db:
+            raise ValtDBError("Not connected to database")
+        if hasattr(self.current_db, 'get_table'):
             table = self.current_db.get_table(name)
+            self.current_table = table
+            return table
+        raise ValtDBError("Database does not support table operations")
 
-        self.current_table = Table(table, name)
-        return self.current_table
-
-    def _create_schema(self, schema_dict: Dict[str, Any]) -> Schema:
-        """Create schema from dictionary"""
-        fields = []
-        for name, config in schema_dict.items():
-            if isinstance(config, str):
-                field = SchemaField(name=name, data_type=DataType[config.upper()])
-            else:
-                field = SchemaField(
-                    name=name,
-                    data_type=DataType[config["type"].upper()],
-                    required=config.get("required", False),
-                    unique=config.get("unique", False),
-                    encrypted=config.get("encrypted", False),
-                    default=config.get("default"),
-                    choices=config.get("choices"),
-                )
-            fields.append(field)
-        return Schema(fields)
-
-    def tables(self):
-        """Get list of tables in the current database"""
+    def list_tables(self) -> List[str]:
+        """List all tables."""
         if not self.current_db:
-            raise ValtDBError("No database selected")
-        return list(self.current_db._tables.keys())
+            raise ValtDBError("Not connected to database")
+        if hasattr(self.current_db, 'list_tables'):
+            return self.current_db.list_tables()
+        return []  
 
-    def transaction(self):
-        """Start database transaction"""
-        return self.current_db.transaction()
-
-    def backup(self, path: str) -> str:
-        """Backup database"""
+    def insert(self, table_name: str, data: Dict[str, Any]) -> None:
+        """Insert data into table."""
         if not self.current_db:
-            raise ValtDBError("No database selected")
+            raise ValtDBError("Not connected to database")
+        table = self.get_table(table_name)
+        table.insert(data)
+        return None  
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file = f"{path}/backup_{timestamp}.db"
-        self.current_db.backup(backup_file)
-        return backup_file
-
-    def restore(self, backup_file: str) -> "ValtDB":
-        """Restore database from backup"""
+    def update(self, table_name: str, query: Dict[str, Any], updates: Dict[str, Any]) -> None:
+        """Update records in table."""
         if not self.current_db:
-            raise ValtDBError("No database selected")
+            raise ValtDBError("Not connected to database")
+        table = self.get_table(table_name)
+        query_obj = Query.from_dict(query)
+        table.update(query_obj, updates)
+        return None  
 
-        self.current_db.restore(backup_file)
+    def select(self, table_name: str, query: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Select records from table."""
+        if not self.current_db:
+            raise ValtDBError("Not connected to database")
+        table = self.get_table(table_name)
+        query_obj = Query.from_dict(query) if query else None
+        return table.select(query_obj)
+
+    def delete(self, table_name: str, query: Dict[str, Any]) -> None:
+        """Delete records from table."""
+        if not self.current_db:
+            raise ValtDBError("Not connected to database")
+        table = self.get_table(table_name)
+        query_obj = Query.from_dict(query)
+        table.delete(query_obj)
+        return None  
+
+    def count(self, table_name: str, query: Optional[Dict[str, Any]] = None) -> int:
+        """Count records in table."""
+        if not self.current_db:
+            raise ValtDBError("Not connected to database")
+        table = self.get_table(table_name)
+        query_obj = Query.from_dict(query) if query else None
+        return table.count(query_obj)
+
+    def backup(self, path: str) -> None:
+        """Backup database."""
+        if not self.current_db:
+            raise ValtDBError("Not connected to database")
+        if hasattr(self.current_db, 'backup'):
+            self.current_db.backup(path)
+        else:
+            raise ValtDBError("Database does not support backup")
+        return None  
+
+    def restore(self, backup_file: str) -> None:
+        """Restore database from backup."""
+        if not os.path.exists(backup_file):
+            raise ValtDBError(f"Backup file not found: {backup_file}")
+        if not self.current_db:
+            raise ValtDBError("Not connected to database")
+        if hasattr(self.current_db, 'restore'):
+            self.current_db.restore(backup_file)
+        else:
+            raise ValtDBError("Database does not support restore")
+        return None  
+
+    def __enter__(self) -> 'ValtDB':
         return self
 
-    def execute(self, query: str, params: Optional[Dict] = None) -> List[Dict[str, Any]]:
-        """Execute raw query"""
-        if not self.current_db:
-            raise ValtDBError("No database selected")
-
-        return self.current_db.execute_query(query, params)
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.close()
+        return None  

@@ -10,9 +10,10 @@ import pytest
 from valtdb import Database
 from valtdb.auth import RBAC, AuthManager
 from valtdb.exceptions import ValtDBError
-from valtdb.query import Operator, Query
+from valtdb.query import Query, Operator
 from valtdb.schema import DataType, Schema, SchemaField
 from valtdb.ssh import RemoteDatabase, SSHConfig
+from valtdb.crypto.encryption import generate_keypair
 
 
 @pytest.fixture
@@ -92,14 +93,14 @@ def test_complete_workflow(test_db, auth_manager):
     table.create_compound_index("dept_status_idx", ["department", "status"])
 
     # Query data
-    query = Query().filter("department", Operator.EQ, "IT").filter("status", Operator.EQ, "active")
+    query = Query().filter("department", Operator.EQUALS, "IT").filter("status", Operator.EQUALS, "active")
 
     results = table.select(query)
     assert len(results) == 1
     assert results[0]["name"] == "John Doe"
 
     # Update data
-    update_query = Query().filter("id", Operator.EQ, 1)
+    update_query = Query().filter("id", Operator.EQUALS, 1)
     table.update(update_query, {"salary": 55000.0})
 
     # Verify update
@@ -176,7 +177,7 @@ def test_error_handling(test_db, auth_manager):
 
     # 4. Query errors
     with pytest.raises(ValtDBError):
-        table.select(Query().filter("nonexistent", Operator.EQ, "value"))
+        table.select(Query().filter("nonexistent", Operator.EQUALS, "value"))
 
     # 5. Index errors
     with pytest.raises(ValtDBError):

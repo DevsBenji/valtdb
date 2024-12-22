@@ -4,7 +4,7 @@ Index management for ValtDB
 
 import bisect
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Union
 
 
 class Index:
@@ -88,6 +88,7 @@ class CompoundIndex(Index):
 class IndexManager:
     def __init__(self):
         self.indexes: Dict[str, Index] = {}
+        self.compound_indexes: Dict[str, CompoundIndex] = {}
 
     def create_index(self, name: str, field: str, unique: bool = False) -> Index:
         """Create new index"""
@@ -102,21 +103,53 @@ class IndexManager:
         self, name: str, fields: List[str], unique: bool = False
     ) -> CompoundIndex:
         """Create new compound index"""
-        if name in self.indexes:
-            raise ValueError(f"Index {name} already exists")
+        if name in self.compound_indexes:
+            raise ValueError(f"Compound index {name} already exists")
 
         index = CompoundIndex(name, fields, unique)
-        self.indexes[name] = index
+        self.compound_indexes[name] = index
         return index
 
+    def insert(self, row_id: int, row_data: Dict[str, Any]):
+        """Insert row data into all indexes"""
+        for index in self.indexes.values():
+            if index.field in row_data:
+                index.add(row_data[index.field], row_id)
+
+        for index in self.compound_indexes.values():
+            values = [row_data.get(field) for field in index.fields]
+            if all(v is not None for v in values):
+                index.add(values, row_id)
+
+    def update_indexes(self, old_row: Dict[str, Any], new_row: Dict[str, Any], row_id: int):
+        """Update indexes when a row is modified"""
+        for index in self.indexes.values():
+            old_value = old_row.get(index.field)
+            new_value = new_row.get(index.field)
+            if old_value != new_value:
+                if old_value is not None:
+                    index.remove(old_value, row_id)
+                if new_value is not None:
+                    index.add(new_value, row_id)
+
+        for index in self.compound_indexes.values():
+            old_values = [old_row.get(field) for field in index.fields]
+            new_values = [new_row.get(field) for field in index.fields]
+            if old_values != new_values and all(v is not None for v in old_values):
+                index.update(old_values, new_values, row_id)
+
     def drop_index(self, name: str):
-        """Drop index"""
+        """Drop an index"""
         if name in self.indexes:
             del self.indexes[name]
+        elif name in self.compound_indexes:
+            del self.compound_indexes[name]
+        else:
+            raise ValueError(f"Index {name} does not exist")
 
-    def get_index(self, name: str) -> Optional[Index]:
+    def get_index(self, name: str) -> Optional[Union[Index, CompoundIndex]]:
         """Get index by name"""
-        return self.indexes.get(name)
+        return self.indexes.get(name) or self.compound_indexes.get(name)
 
     def rebuild_indexes(self, data: List[Dict[str, Any]]):
         """Rebuild all indexes"""
@@ -133,17 +166,3 @@ class IndexManager:
                     value = row.get(index.field)
                     if value is not None:
                         index.add(value, i)
-
-    def update_indexes(self, old_row: Dict[str, Any], new_row: Dict[str, Any], row_id: int):
-        """Update all indexes for row update"""
-        for index in self.indexes.values():
-            if isinstance(index, CompoundIndex):
-                old_values = [old_row.get(field) for field in index.fields]
-                new_values = [new_row.get(field) for field in index.fields]
-                if all(v is not None for v in old_values + new_values):
-                    index.update(old_values, new_values, row_id)
-            else:
-                old_value = old_row.get(index.field)
-                new_value = new_row.get(index.field)
-                if old_value is not None and new_value is not None:
-                    index.update(old_value, new_value, row_id)

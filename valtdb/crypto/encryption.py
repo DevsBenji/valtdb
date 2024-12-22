@@ -27,26 +27,14 @@ class HashAlgorithm(Enum):
     SHA256 = "sha256"
 
 
-class KeyPair:
-    """Container for asymmetric encryption keys"""
-
-    def __init__(self, private_key: Any = None, public_key: Any = None):
-        self.private_key = private_key
-        self.public_key = public_key
-
-    @property
-    def has_private_key(self):
-        return self.private_key is not None
-
-
 def generate_keypair() -> KeyPair:
     """Generate a new key pair.
 
     Returns:
         KeyPair: A new key pair
     """
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    public_key = private_key.public_key()
+    private_key: rsa.RSAPrivateKey = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_key: rsa.RSAPublicKey = private_key.public_key()
     return KeyPair(private_key, public_key)
 
 
@@ -60,39 +48,38 @@ def encrypt_data(data: Union[str, Dict[str, Any]], key: Union[rsa.RSAPublicKey, 
     Returns:
         bytes: Encrypted data
     """
+    # If data is a dictionary, convert to JSON
     if isinstance(data, dict):
-        data = json.dumps(data)
-    elif not isinstance(data, str):
-        data = str(data)
-
-    data_bytes = data.encode()
-
-    if isinstance(key, rsa.RSAPublicKey):
-        # For RSA, we need to use symmetric encryption for large data
-        fernet_key = Fernet.generate_key()
-        fernet = Fernet(fernet_key)
-
-        # Encrypt data with Fernet
-        encrypted_data = fernet.encrypt(data_bytes)
-
-        # Encrypt Fernet key with RSA
-        encrypted_key = key.encrypt(
-            fernet_key,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None
-            ),
-        )
-
-        # Combine encrypted key and data
-        return encrypted_key + b":" + encrypted_data
+        data_bytes = json.dumps(data, sort_keys=True).encode('utf-8')
+    # If data is a string, convert to bytes
+    elif isinstance(data, str):
+        data_bytes = data.encode('utf-8')
     else:
-        # For symmetric encryption, just use Fernet directly
-        fernet = Fernet(key)
-        return fernet.encrypt(data_bytes)
+        raise TypeError(f"Unsupported data type for encryption: {type(data)}")
+
+    # If key is a public key (RSA), use asymmetric encryption
+    if isinstance(key, rsa.RSAPublicKey):
+        return key.encrypt(
+            data_bytes,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+            )
+        )
+    
+    # If key is symmetric (bytes), use Fernet symmetric encryption
+    elif isinstance(key, bytes):
+        f = Fernet(key)
+        return f.encrypt(data_bytes)
+    
+    else:
+        raise TypeError(f"Unsupported key type for encryption: {type(key)}")
 
 
 def decrypt_data(
-    encrypted_data: bytes, key: Union[rsa.RSAPrivateKey, bytes]
+    encrypted_data: bytes, 
+    key: Union[rsa.RSAPrivateKey, bytes]
 ) -> Union[str, Dict[str, Any]]:
     """Decrypt data using private key or symmetric key.
 
@@ -103,31 +90,34 @@ def decrypt_data(
     Returns:
         Union[str, Dict[str, Any]]: Decrypted data
     """
+    # If key is an RSA private key, use RSA decryption
     if isinstance(key, rsa.RSAPrivateKey):
-        # Split encrypted key and data
-        encrypted_key, encrypted_content = encrypted_data.split(b":", 1)
-
-        # Decrypt Fernet key
-        fernet_key = key.decrypt(
-            encrypted_key,
+        decrypted_bytes = key.decrypt(
+            encrypted_data,
             padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None
-            ),
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+            )
         )
-
-        # Decrypt data with Fernet
-        fernet = Fernet(fernet_key)
-        decrypted = fernet.decrypt(encrypted_content)
+    
+    # If key is symmetric (bytes), use Fernet symmetric decryption
+    elif isinstance(key, bytes):
+        f = Fernet(key)
+        decrypted_bytes = f.decrypt(encrypted_data)
+    
     else:
-        # For symmetric decryption, just use Fernet directly
-        fernet = Fernet(key)
-        decrypted = fernet.decrypt(encrypted_data)
+        raise TypeError(f"Unsupported key type for decryption: {type(key)}")
 
-    decrypted_str = decrypted.decode()
+    # Try to parse as JSON, otherwise return as string
     try:
-        return json.loads(decrypted_str)
-    except json.JSONDecodeError:
-        return decrypted_str
+        # Explicitly type the return value as Dict[str, Any]
+        decoded_data: Dict[str, Any] = json.loads(decrypted_bytes.decode('utf-8'))
+        return decoded_data
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        # Explicitly type the return value as str
+        decoded_str: str = decrypted_bytes.decode('utf-8')
+        return decoded_str
 
 
 def hash_data(data: Dict[str, Any]) -> str:
@@ -139,10 +129,15 @@ def hash_data(data: Dict[str, Any]) -> str:
     Returns:
         str: Hash of data
     """
+    # Convert dictionary to a sorted, consistent string representation
     data_str = json.dumps(data, sort_keys=True)
-    hasher = hashes.Hash(hashes.SHA256())
-    hasher.update(data_str.encode())
-    return hasher.finalize().hex()
+    
+    # Create a hash object
+    digest = hashes.Hash(hashes.SHA256())
+    digest.update(data_str.encode('utf-8'))
+    
+    # Return hexadecimal representation of hash
+    return digest.finalize().hex()
 
 
 def verify_hash(data: Dict[str, Any], hash_value: str) -> bool:
@@ -181,10 +176,22 @@ class EncryptionManager:
 
     def encrypt(self, data: Union[str, Dict[str, Any]]) -> bytes:
         """Encrypt data using the public key"""
+        if not self.keypair.public_key:
+            raise ValueError("No public key available for encryption")
+        
         return encrypt_data(data, self.keypair.public_key)
 
     def decrypt(self, encrypted_data: bytes) -> Union[str, Dict[str, Any]]:
         """Decrypt data using the private key"""
-        if not self.keypair.has_private_key:
-            raise ValueError("Cannot decrypt without private key")
+        if not self.keypair.private_key:
+            raise ValueError("No private key available for decryption")
+        
         return decrypt_data(encrypted_data, self.keypair.private_key)
+
+    def hash(self, data: Dict[str, Any]) -> str:
+        """Generate hash for data"""
+        return hash_data(data)
+
+    def verify_hash(self, data: Dict[str, Any], hash_value: str) -> bool:
+        """Verify hash for data"""
+        return verify_hash(data, hash_value)

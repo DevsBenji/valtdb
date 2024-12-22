@@ -19,6 +19,11 @@ class DataType(Enum):
     ENCRYPTED_FLOAT = "encrypted_float"
     ENCRYPTED_STR = "encrypted_str"
     ENCRYPTED_DICT = "encrypted_dict"
+    DATETIME = "datetime"
+    BYTES = "bytes"
+    STRING = "str"
+    INTEGER = "int"
+    BOOLEAN = "bool"
 
 
 class SchemaField:
@@ -67,7 +72,7 @@ class SchemaField:
         """Convert field to dictionary"""
         return {
             "name": self.name,
-            "type": self.field_type.value,
+            "type": self.field_type.value if self.field_type else "str",
             "required": self.required,
             "unique": self.unique,
             "default": self.default,
@@ -102,13 +107,13 @@ class Schema:
         """Initialize schema.
 
         Args:
-            schema_data: Either a list of SchemaField objects, 
-                         a dictionary mapping field names to types, 
+            schema_data: Either a list of SchemaField objects,
+                         a dictionary mapping field names to types,
                          or a dictionary with more complex field definitions
         """
         # Handle different input types
-        self.fields = {}
-        
+        self.fields: Dict[str, SchemaField] = {}
+
         if isinstance(schema_data, list):
             # List of SchemaField objects
             self.fields = {field.name: field for field in schema_data}
@@ -120,10 +125,7 @@ class Schema:
                     try:
                         data_type = DataType(field_def)
                         self.fields[name] = SchemaField(
-                            name=name, 
-                            field_type=data_type, 
-                            required=False, 
-                            unique=False
+                            name=name, field_type=data_type, required=False, unique=False
                         )
                     except ValueError:
                         raise ValtDBError(f"Invalid field type '{field_def}' for field '{name}'")
@@ -131,18 +133,18 @@ class Schema:
                     # More complex type definition
                     try:
                         # Extract type, defaulting to 'str' if not specified
-                        type_str = field_def.get('type', field_def.get('field_type', 'str'))
+                        type_str = field_def.get("type", field_def.get("field_type", "str"))
                         data_type = DataType(type_str)
-                        
+
                         # Create SchemaField with additional parameters
                         self.fields[name] = SchemaField(
                             name=name,
                             field_type=data_type,
-                            required=field_def.get('required', False),
-                            unique=field_def.get('unique', False),
-                            default=field_def.get('default'),
-                            min_value=field_def.get('min_value'),
-                            max_value=field_def.get('max_value')
+                            required=field_def.get("required", False),
+                            unique=field_def.get("unique", False),
+                            default=field_def.get("default"),
+                            min_value=field_def.get("min_value"),
+                            max_value=field_def.get("max_value"),
                         )
                     except ValueError:
                         raise ValtDBError(f"Invalid field type '{type_str}' for field '{name}'")
@@ -150,7 +152,7 @@ class Schema:
                     raise ValtDBError(f"Invalid schema definition for field '{name}'")
         else:
             raise ValtDBError(f"Invalid schema type: {type(schema_data)}")
-        
+
         # Validate schema configuration
         self._validate_schema()
 
@@ -160,57 +162,97 @@ class Schema:
         if len(self.fields) != len(set(f.name for f in self.fields.values())):
             raise ValtDBError("Duplicate field names in schema")
 
-    def validate_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_data(self, data: Dict[str, Any], existing_data: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
         Validate input data against the schema.
 
         Args:
             data: Dictionary of data to validate
+            existing_data: Optional list of existing data to check unique constraints
 
         Returns:
             Validated data dictionary
         """
-        validated_data = {}
+        validated_data: Dict[str, Any] = {}
+
+        # Check for missing required fields
         for field_name, field_def in self.fields.items():
-            # Check if field is present in input data
+            if field_def.required and field_name not in data:
+                raise ValtDBError(f"Missing required field: {field_name}")
+
+            # Skip optional fields that are not present
             if field_name not in data:
-                if field_def.required:
-                    raise ValtDBError(f"Required field '{field_name}' is missing")
                 continue
 
-            # Validate field type
+            value = data[field_name]
             try:
                 # Convert value based on field type
-                value = data[field_name]
-                if field_def.field_type.value == "int":
+                if field_def.field_type is None:
+                    raise ValtDBError(f"Field type not specified for field '{field_name}'")
+                
+                # Explicit type conversion with type checking
+                if field_def.field_type == DataType.INT:
                     validated_data[field_name] = int(value)
-                elif field_def.field_type.value == "str":
-                    validated_data[field_name] = str(value)
-                elif field_def.field_type.value == "float":
+                elif field_def.field_type == DataType.FLOAT:
                     validated_data[field_name] = float(value)
+                elif field_def.field_type == DataType.STR:
+                    validated_data[field_name] = str(value)
+                elif field_def.field_type == DataType.BOOL:
+                    validated_data[field_name] = bool(value)
                 elif field_def.field_type.value.startswith("encrypted_"):
                     validated_data[field_name] = value
+                elif field_def.field_type == DataType.DATETIME:
+                    # Assuming datetime is in ISO format
+                    from datetime import datetime
+                    validated_data[field_name] = datetime.fromisoformat(value)
+                elif field_def.field_type == DataType.BYTES:
+                    validated_data[field_name] = bytes(value, 'utf-8')
                 else:
                     raise ValueError(f"Unsupported type: {field_def.field_type.value}")
+
+                # Length validation for string types
+                if field_def.field_type == DataType.STR or field_def.field_type == DataType.ENCRYPTED_STR:
+                    if field_def.min_length is not None and len(validated_data[field_name]) < field_def.min_length:
+                        raise ValtDBError(f"Value for field '{field_name}' is shorter than minimum length {field_def.min_length}")
+                    if field_def.max_length is not None and len(validated_data[field_name]) > field_def.max_length:
+                        raise ValtDBError(f"Value for field '{field_name}' is longer than maximum length {field_def.max_length}")
+
             except Exception as e:
                 raise ValtDBError(f"Invalid value for field '{field_name}': {str(e)}")
 
             # Check unique constraint
-            if field_def.unique:
-                if any(existing.get(field_name) == validated_data[field_name] 
-                       for existing in self._data):
+            if field_def.unique and existing_data is not None:
+                if any(
+                    existing.get(field_name) == validated_data[field_name]
+                    for existing in existing_data
+                ):
                     raise ValtDBError(f"Unique constraint violated for field '{field_name}'")
+
+            # Numeric range validation
+            if field_def.field_type in [DataType.INT, DataType.FLOAT, 
+                                        DataType.ENCRYPTED_INT, DataType.ENCRYPTED_FLOAT]:
+                if field_def.min_value is not None and validated_data[field_name] < field_def.min_value:
+                    raise ValtDBError(f"Value for field '{field_name}' is less than minimum {field_def.min_value}")
+                
+                if field_def.max_value is not None and validated_data[field_name] > field_def.max_value:
+                    raise ValtDBError(f"Value for field '{field_name}' is greater than maximum {field_def.max_value}")
+
+            # Choices validation
+            if field_def.choices is not None and validated_data[field_name] not in field_def.choices:
+                raise ValtDBError(f"Value for field '{field_name}' must be one of {field_def.choices}")
 
         return validated_data
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> Dict[str, Dict[str, Any]]:
         """Convert schema to dictionary"""
         return {name: field.to_dict() for name, field in self.fields.items()}
 
+    def get_field(self, field_name: str) -> Optional[SchemaField]:
+        """Get field by name."""
+        return self.fields.get(field_name)
+
     @classmethod
-    def from_dict(cls, data: Dict) -> "Schema":
+    def from_dict(cls, schema_dict: Dict[str, Dict[str, Any]]) -> "Schema":
         """Create schema from dictionary"""
-        fields = [
-            SchemaField.from_dict({**field_data, "name": name}) for name, field_data in data.items()
-        ]
-        return cls(fields)
+        schema_fields = [SchemaField.from_dict(field_data) for field_data in schema_dict.values()]
+        return cls(schema_fields)

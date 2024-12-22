@@ -2,9 +2,12 @@
 Command Line Interface for ValtDB
 """
 
-import argparse
+import os
 import sys
+import argparse
 from typing import List
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from .crypto import KeyPair, generate_keypair
 from .database import Database
@@ -63,10 +66,19 @@ def main(args: List[str] = None) -> int:
 
         elif parsed_args.command == "generate-keys":
             keypair = generate_keypair()
+            # Save private key
             with open(parsed_args.private, "wb") as f:
-                f.write(keypair.private_key)
+                f.write(keypair.private_key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption()
+                ))
+            # Save public key
             with open(parsed_args.public, "wb") as f:
-                f.write(keypair.public_key)
+                f.write(keypair.public_key.public_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PublicFormat.SubjectPublicKeyInfo
+                ))
             print("Generated encryption keys")
 
         elif parsed_args.command == "create-table":

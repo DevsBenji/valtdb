@@ -3,61 +3,121 @@ Query builder module for ValtDB
 """
 
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, cast
 
 
 class Operator(Enum):
-    EQ = "eq"  # ==
-    NE = "ne"  # !=
-    GT = "gt"  # >
-    LT = "lt"  # <
-    GTE = "gte"  # >=
-    LTE = "lte"  # <=
-    IN = "in"  # in list
-    LIKE = "like"  # pattern matching
-    BETWEEN = "between"  # between range
+    EQUALS = "="
+    NOT_EQUALS = "!="
+    GREATER_THAN = ">"
+    LESS_THAN = "<"
+    GREATER_EQUAL = ">="
+    LESS_EQUAL = "<="
+    CONTAINS = "CONTAINS"
+    NOT_CONTAINS = "NOT_CONTAINS"
+    IN = "IN"
+    NOT_IN = "NOT_IN"
 
 
 class Query:
+    """Query builder for database operations."""
     def __init__(self):
-        self._conditions = []
-        self._sort_by = []
-        self._limit = None
-        self._offset = None
+        self.filters: List[Dict[str, Any]] = []
+        self.or_filters: List[Dict[str, Any]] = []
 
-    def filter(self, field: str, operator: Operator, value: Any) -> "Query":
-        """Add filter condition"""
-        self._conditions.append({"field": field, "op": operator, "value": value})
+    def filter(self, field: str, operator: Operator, value: Any) -> 'Query':
+        """Add a filter condition."""
+        self.filters.append({
+            "field": field,
+            "operator": operator,
+            "value": value
+        })
         return self
 
-    def sort(self, field: str, ascending: bool = True) -> "Query":
-        """Add sort condition"""
-        self._sort_by.append({"field": field, "ascending": ascending})
+    def or_filter(self, field: str, operator: Operator, value: Any) -> 'Query':
+        """Add an OR filter condition."""
+        self.or_filters.append({
+            "field": field,
+            "operator": operator,
+            "value": value
+        })
         return self
 
-    def limit(self, limit: int) -> "Query":
-        """Set limit"""
-        self._limit = limit
-        return self
+    def matches(self, record: Dict[str, Any]) -> bool:
+        """Check if record matches query conditions."""
+        # If no filters, match all records
+        if not self.filters and not self.or_filters:
+            return True
 
-    def offset(self, offset: int) -> "Query":
-        """Set offset"""
-        self._offset = offset
-        return self
+        # Check AND conditions
+        matches_filters = True
+        if self.filters:
+            matches_filters = all(self._check_condition(record, f) for f in self.filters)
 
-    def to_dict(self) -> Dict:
-        """Convert query to dictionary"""
+        # Check OR conditions
+        matches_or_filters = False
+        if self.or_filters:
+            matches_or_filters = any(self._check_condition(record, f) for f in self.or_filters)
+
+        # Return true if either all AND conditions match, or any OR condition matches
+        return bool(matches_filters or matches_or_filters)
+
+    def _check_condition(self, record: Dict[str, Any], condition: Dict[str, Any]) -> bool:
+        """Check if record matches a single condition."""
+        field = condition["field"]
+        operator = condition["operator"]
+        value = condition["value"]
+
+        if field not in record:
+            return False
+
+        record_value = record[field]
+
+        try:
+            if operator == Operator.EQUALS:
+                return bool(record_value == value)
+            elif operator == Operator.NOT_EQUALS:
+                return bool(record_value != value)
+            elif operator == Operator.GREATER_THAN:
+                return bool(record_value > value)
+            elif operator == Operator.LESS_THAN:
+                return bool(record_value < value)
+            elif operator == Operator.GREATER_EQUAL:
+                return bool(record_value >= value)
+            elif operator == Operator.LESS_EQUAL:
+                return bool(record_value <= value)
+            elif operator == Operator.CONTAINS:
+                return bool(value in str(record_value))
+            elif operator == Operator.NOT_CONTAINS:
+                return bool(value not in str(record_value))
+            elif operator == Operator.IN:
+                return bool(record_value in value)
+            elif operator == Operator.NOT_IN:
+                return bool(record_value not in value)
+            else:
+                raise ValueError(f"Unknown operator: {operator}")
+        except (TypeError, ValueError):
+            return False
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert query to dictionary."""
         return {
-            "conditions": self._conditions,
-            "sort_by": self._sort_by,
-            "limit": self._limit,
-            "offset": self._offset,
+            "filters": self.filters,
+            "or_filters": self.or_filters
         }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Query':
+        """Create query from dictionary."""
+        query = cls()
+        query.filters = data.get("filters", [])
+        query.or_filters = data.get("or_filters", [])
+        return query
 
 
 class QueryExecutor:
     @staticmethod
-    def evaluate_condition(row: Dict[str, Any], condition: Dict) -> bool:
+    def evaluate_condition(row: Dict[str, Any], condition: Dict[str, Any]) -> bool:
         """Evaluate single condition"""
         field = condition["field"]
         op = condition["op"]
@@ -68,26 +128,67 @@ class QueryExecutor:
 
         row_value = row[field]
 
-        if op == Operator.EQ:
-            return row_value == value
-        elif op == Operator.NE:
-            return row_value != value
-        elif op == Operator.GT:
-            return row_value > value
-        elif op == Operator.LT:
-            return row_value < value
-        elif op == Operator.GTE:
-            return row_value >= value
-        elif op == Operator.LTE:
-            return row_value <= value
-        elif op == Operator.IN:
-            return row_value in value
-        elif op == Operator.LIKE:
-            return self._match_pattern(str(row_value), str(value))
-        elif op == Operator.BETWEEN:
-            return value[0] <= row_value <= value[1]
+        def safe_compare(a: Any, b: Any) -> bool:
+            """Safely compare two values"""
+            def _is_numeric(x: Any) -> bool:
+                return isinstance(x, (int, float))
 
-        return False
+            def _is_comparable_list(x: Any) -> bool:
+                return isinstance(x, (list, tuple, set))
+
+            def _compare_numeric() -> bool:
+                if not (_is_numeric(a) and _is_numeric(b)):
+                    return False
+                
+                if op == Operator.GREATER_THAN:
+                    return bool(a > b)
+                elif op == Operator.LESS_THAN:
+                    return bool(a < b)
+                elif op == Operator.GREATER_EQUAL:
+                    return bool(a >= b)
+                elif op == Operator.LESS_EQUAL:
+                    return bool(a <= b)
+                return False
+
+            def _compare_equality() -> bool:
+                if op == Operator.EQUALS:
+                    return bool(a == b)
+                elif op == Operator.NOT_EQUALS:
+                    return bool(a != b)
+                return False
+
+            def _compare_membership() -> bool:
+                if op == Operator.IN:
+                    return bool(_is_comparable_list(b) and a in b)
+                return False
+
+            def _compare_between() -> bool:
+                if (op == Operator.GREATER_THAN and 
+                    _is_comparable_list(b) and 
+                    len(b) == 2 and 
+                    all(_is_numeric(x) for x in b) and 
+                    _is_numeric(a)):
+                    return bool(b[0] <= a <= b[1])
+                return False
+
+            def _compare_like() -> bool:
+                if op == Operator.CONTAINS:
+                    return bool(QueryExecutor._match_pattern(str(a), str(b)))
+                return False
+
+            result = (
+                _compare_numeric() or 
+                _compare_equality() or 
+                _compare_membership() or 
+                _compare_between() or 
+                _compare_like()
+            )
+            return bool(result)
+
+        try:
+            return safe_compare(row_value, value)
+        except Exception:
+            return False
 
     @staticmethod
     def _match_pattern(text: str, pattern: str) -> bool:
@@ -123,13 +224,16 @@ class QueryExecutor:
         result = []
         for row in data:
             if all(
-                QueryExecutor.evaluate_condition(row, cond) for cond in query_dict["conditions"]
+                QueryExecutor.evaluate_condition(row, cond) for cond in query_dict["filters"]
             ):
                 result.append(row)
 
         # Apply sorting
         for sort_rule in reversed(query_dict["sort_by"]):
-            result.sort(key=lambda x: x.get(sort_rule["field"]), reverse=not sort_rule["ascending"])
+            result.sort(
+                key=lambda x: x.get(sort_rule["field"], None), 
+                reverse=not sort_rule["ascending"]
+            )
 
         # Apply offset and limit
         if query_dict["offset"]:
