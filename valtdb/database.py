@@ -51,15 +51,13 @@ class Database:
                             name=table_name,
                             table_data=table_data,
                             keypair=(
-                                self._encryption_manager.keypair
-                                if self._encryption_manager
-                                else None
+                                self._encryption_manager.keypair if self._encryption_manager else None
                             ),
                         )
                     except Exception as e:
                         raise ValtDBError(f"Failed to load table {table_name}: {str(e)}")
 
-    def table(self, name: str, schema_dict: Optional[Dict[str, str]] = None) -> "Table":
+    def table(self, name: str, schema_dict: Optional[Dict[str, str]] = None) -> 'Table':
         """
         Create or get a table.
 
@@ -85,39 +83,38 @@ class Database:
                 "type": field_type,
                 "required": False,
                 "unique": False,
-                "encrypted": False,
+                "encrypted": False
             }
 
         # Create table data structure
-        table_data = {"schema": full_schema_dict, "data": []}
+        table_data = {
+            "schema": full_schema_dict,
+            "data": []
+        }
 
         # Create and store the table
         self._tables[name] = Table(
-            name=name,
-            table_data=table_data,
-            keypair=(
-                self._encryption_manager.generate_keypair() if self._encryption_manager else None
-            ),
+            name=name, 
+            table_data=table_data, 
+            keypair=self._encryption_manager.generate_keypair() if self._encryption_manager else None
         )
 
         return self._tables[name]
 
-    def create_table(
-        self, name: str, schema: Union[Dict[str, str], Schema, Dict[str, Any]]
-    ) -> Table:
+    def create_table(self, name: str, schema: Union[Dict[str, str], Schema, Dict[str, Any]]) -> Table:
         """
         Create a new table.
-
+        
         Args:
             name: Name of the table
             schema: Schema for the table (can be a dictionary, Schema object, or SchemaField)
-
+        
         Returns:
             Table instance
         """
         if name in self._tables:
             raise ValtDBError(f"Table {name} already exists")
-
+        
         # Convert schema to dictionary of field types
         if isinstance(schema, Schema):
             schema_dict = {field.name: field.field_type.value for field in schema.fields}
@@ -130,14 +127,12 @@ class Database:
                     schema_dict[field_name] = field_def
                 elif isinstance(field_def, dict):
                     # More complex definition like {"name": {"type": "str", "unique": True}}
-                    schema_dict[field_name] = field_def.get(
-                        "type", field_def.get("field_type", "str")
-                    )
+                    schema_dict[field_name] = field_def.get('type', field_def.get('field_type', 'str'))
                 else:
                     raise ValtDBError(f"Invalid schema definition for field {field_name}")
         else:
             raise ValtDBError(f"Invalid schema type: {type(schema)}")
-
+        
         return self.table(name, schema_dict)
 
     def save(self):
@@ -225,8 +220,148 @@ class Table:
         self.schema = Schema.from_dict(table_data["schema"])
         self.keypair = keypair
 
-    def all(self):
+    def all(self) -> List[Dict[str, Any]]:
         """Return all records in the table"""
         return list(self._data)
 
-    # ... rest of the Table class methods ...
+    def insert(self, row: Dict[str, Any]) -> int:
+        """
+        Insert a new row into the table.
+
+        Args:
+            row: Dictionary representing the row to insert
+
+        Returns:
+            int: The index of the inserted row
+        """
+        # Validate the row against the schema
+        validated_row = self.schema.validate_data(row)
+        
+        # Add the row to the data
+        row_id = len(self._data)
+        self._data.append(validated_row)
+        
+        return row_id
+
+    def select(self, query: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """
+        Select rows from the table based on optional query.
+
+        Args:
+            query: Optional dictionary of filter conditions
+
+        Returns:
+            List of matching rows
+        """
+        if not query:
+            return self.all()
+        
+        results = []
+        for row in self._data:
+            match = all(
+                row.get(key) == value 
+                for key, value in query.items() 
+                if key in row
+            )
+            if match:
+                results.append(row)
+        
+        return results
+
+    def update(self, query: Dict[str, Any], updates: Dict[str, Any]) -> int:
+        """
+        Update rows matching the query.
+
+        Args:
+            query: Dictionary of filter conditions
+            updates: Dictionary of fields to update
+
+        Returns:
+            int: Number of rows updated
+        """
+        updated_count = 0
+        for row in self._data:
+            match = all(
+                row.get(key) == value 
+                for key, value in query.items() 
+                if key in row
+            )
+            if match:
+                # Validate updates against schema
+                for field, value in updates.items():
+                    if field in self.schema.fields:
+                        row[field] = self.schema.validate_field(field, value)
+                updated_count += 1
+        
+        return updated_count
+
+    def delete(self, query: Optional[Dict[str, Any]] = None) -> int:
+        """
+        Delete rows matching the query.
+
+        Args:
+            query: Optional dictionary of filter conditions
+
+        Returns:
+            int: Number of rows deleted
+        """
+        if not query:
+            original_count = len(self._data)
+            self._data.clear()
+            return original_count
+        
+        # Create a new list without matching rows
+        original_count = len(self._data)
+        self._data = [
+            row for row in self._data 
+            if not all(
+                row.get(key) == value 
+                for key, value in query.items() 
+                if key in row
+            )
+        ]
+        
+        return original_count - len(self._data)
+
+    def count(self, query: Optional[Dict[str, Any]] = None) -> int:
+        """
+        Count rows matching the query.
+
+        Args:
+            query: Optional dictionary of filter conditions
+
+        Returns:
+            int: Number of matching rows
+        """
+        return len(self.select(query))
+
+    def first(self, query: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """
+        Return the first row matching the query.
+
+        Args:
+            query: Optional dictionary of filter conditions
+
+        Returns:
+            First matching row or None
+        """
+        results = self.select(query)
+        return results[0] if results else None
+
+    def __len__(self) -> int:
+        """
+        Return the number of rows in the table.
+
+        Returns:
+            int: Total number of rows
+        """
+        return len(self._data)
+
+    def __iter__(self):
+        """
+        Make the table iterable.
+
+        Returns:
+            Iterator over table rows
+        """
+        return iter(self._data)
