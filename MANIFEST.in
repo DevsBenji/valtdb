@@ -1,0 +1,13 @@
+include README.md
+include LICENSE
+include requirements.txt
+include pytest.ini
+include Makefile
+
+recursive-include valtdb *.py
+recursive-include valtdb *.pyi
+recursive-include valtdb py.typed
+
+recursive-exclude * __pycache__
+recursive-exclude * *.py[cod]
+recursive-exclude * *.so
