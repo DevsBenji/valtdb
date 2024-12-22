@@ -290,3 +290,7 @@ ValtDB распространяется под лицензией MIT. Подр�
 ## Авторы
 
 ValtDB разрабатывается и поддерживается [командой разработчиков](https://github.com/valtdb/valtdb/graphs/contributors).
+
+## Теги
+
+#python #database #encryption #secure-database #nosql #embedded-database #python-library #database-management #crypto #secure-storage #key-value-store #document-database #python-package #database-security #python3 #encrypted-storage #secure-communication #database-tools #python-development #data-storage
