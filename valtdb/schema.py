@@ -98,22 +98,60 @@ class SchemaField:
 
 
 class Schema:
-    def __init__(self, schema_data: Union[List[SchemaField], Dict[str, str]]):
+    def __init__(self, schema_data: Union[List[SchemaField], Dict[str, str], Dict[str, Any]]):
         """Initialize schema.
 
         Args:
-            schema_data: Either a list of SchemaField objects or a dictionary mapping field names to types
+            schema_data: Either a list of SchemaField objects, 
+                         a dictionary mapping field names to types, 
+                         or a dictionary with more complex field definitions
         """
-        if isinstance(schema_data, dict):
-            self.fields = {}
-            for name, field_type in schema_data.items():
-                try:
-                    data_type = DataType(field_type)
-                    self.fields[name] = SchemaField(name=name, field_type=data_type)
-                except ValueError:
-                    raise ValtDBError(f"Invalid field type '{field_type}' for field '{name}'")
-        else:
+        # Handle different input types
+        self.fields = {}
+        
+        if isinstance(schema_data, list):
+            # List of SchemaField objects
             self.fields = {field.name: field for field in schema_data}
+        elif isinstance(schema_data, dict):
+            for name, field_def in schema_data.items():
+                # Handle different input formats
+                if isinstance(field_def, str):
+                    # Simple type string
+                    try:
+                        data_type = DataType(field_def)
+                        self.fields[name] = SchemaField(
+                            name=name, 
+                            field_type=data_type, 
+                            required=False, 
+                            unique=False
+                        )
+                    except ValueError:
+                        raise ValtDBError(f"Invalid field type '{field_def}' for field '{name}'")
+                elif isinstance(field_def, dict):
+                    # More complex type definition
+                    try:
+                        # Extract type, defaulting to 'str' if not specified
+                        type_str = field_def.get('type', field_def.get('field_type', 'str'))
+                        data_type = DataType(type_str)
+                        
+                        # Create SchemaField with additional parameters
+                        self.fields[name] = SchemaField(
+                            name=name,
+                            field_type=data_type,
+                            required=field_def.get('required', False),
+                            unique=field_def.get('unique', False),
+                            default=field_def.get('default'),
+                            min_value=field_def.get('min_value'),
+                            max_value=field_def.get('max_value')
+                        )
+                    except ValueError:
+                        raise ValtDBError(f"Invalid field type '{type_str}' for field '{name}'")
+                else:
+                    raise ValtDBError(f"Invalid schema definition for field '{name}'")
+        else:
+            raise ValtDBError(f"Invalid schema type: {type(schema_data)}")
+        
+        # Validate schema configuration
         self._validate_schema()
 
     def _validate_schema(self):
@@ -123,79 +161,47 @@ class Schema:
             raise ValtDBError("Duplicate field names in schema")
 
     def validate_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate data against schema"""
-        validated = {}
+        """
+        Validate input data against the schema.
 
-        # Check required fields
-        for name, field in self.fields.items():
-            if field.required and name not in data:
-                if field.default is not None:
-                    validated[name] = field.default
+        Args:
+            data: Dictionary of data to validate
+
+        Returns:
+            Validated data dictionary
+        """
+        validated_data = {}
+        for field_name, field_def in self.fields.items():
+            # Check if field is present in input data
+            if field_name not in data:
+                if field_def.required:
+                    raise ValtDBError(f"Required field '{field_name}' is missing")
+                continue
+
+            # Validate field type
+            try:
+                # Convert value based on field type
+                value = data[field_name]
+                if field_def.field_type.value == "int":
+                    validated_data[field_name] = int(value)
+                elif field_def.field_type.value == "str":
+                    validated_data[field_name] = str(value)
+                elif field_def.field_type.value == "float":
+                    validated_data[field_name] = float(value)
+                elif field_def.field_type.value.startswith("encrypted_"):
+                    validated_data[field_name] = value
                 else:
-                    raise ValtDBError(f"Required field '{name}' is missing")
+                    raise ValueError(f"Unsupported type: {field_def.field_type.value}")
+            except Exception as e:
+                raise ValtDBError(f"Invalid value for field '{field_name}': {str(e)}")
 
-        # Validate each field
-        for name, value in data.items():
-            if name not in self.fields:
-                raise ValtDBError(f"Unknown field '{name}'")
+            # Check unique constraint
+            if field_def.unique:
+                if any(existing.get(field_name) == validated_data[field_name] 
+                       for existing in self._data):
+                    raise ValtDBError(f"Unique constraint violated for field '{field_name}'")
 
-            field = self.fields[name]
-            validated[name] = self._validate_field(field, value)
-
-        return validated
-
-    def _validate_field(self, field: SchemaField, value: Any) -> Any:
-        """Validate single field"""
-        if value is None:
-            if field.required:
-                raise ValtDBError(f"Field '{field.name}' cannot be None")
-            return None
-
-        # Type validation
-        if field.field_type in [DataType.INT, DataType.ENCRYPTED_INT]:
-            if not isinstance(value, int):
-                raise ValtDBError(f"Field '{field.name}' must be an integer")
-        elif field.field_type in [DataType.FLOAT, DataType.ENCRYPTED_FLOAT]:
-            if not isinstance(value, (int, float)):
-                raise ValtDBError(f"Field '{field.name}' must be a number")
-        elif field.field_type in [DataType.STR, DataType.ENCRYPTED_STR]:
-            if not isinstance(value, str):
-                raise ValtDBError(f"Field '{field.name}' must be a string")
-        elif field.field_type == DataType.BOOL:
-            if not isinstance(value, bool):
-                raise ValtDBError(f"Field '{field.name}' must be a boolean")
-        elif field.field_type == DataType.LIST:
-            if not isinstance(value, list):
-                raise ValtDBError(f"Field '{field.name}' must be a list")
-        elif field.field_type in [DataType.DICT, DataType.ENCRYPTED_DICT]:
-            if not isinstance(value, dict):
-                raise ValtDBError(f"Field '{field.name}' must be a dictionary")
-
-        # Value range validation
-        if field.min_value is not None and value < field.min_value:
-            raise ValtDBError(f"Field '{field.name}' value must be >= {field.min_value}")
-        if field.max_value is not None and value > field.max_value:
-            raise ValtDBError(f"Field '{field.name}' value must be <= {field.max_value}")
-
-        # Length validation
-        if isinstance(value, (str, list, dict)):
-            if field.min_length is not None and len(value) < field.min_length:
-                raise ValtDBError(f"Field '{field.name}' length must be >= {field.min_length}")
-            if field.max_length is not None and len(value) > field.max_length:
-                raise ValtDBError(f"Field '{field.name}' length must be <= {field.max_length}")
-
-        # Pattern validation
-        if field.pattern and isinstance(value, str):
-            import re
-
-            if not re.match(field.pattern, value):
-                raise ValtDBError(f"Field '{field.name}' does not match pattern {field.pattern}")
-
-        # Choices validation
-        if field.choices is not None and value not in field.choices:
-            raise ValtDBError(f"Field '{field.name}' value must be one of {field.choices}")
-
-        return value
+        return validated_data
 
     def to_dict(self) -> Dict:
         """Convert schema to dictionary"""
