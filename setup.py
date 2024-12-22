@@ -53,22 +53,22 @@ setup(
     ],
     python_requires=">=3.8",
     install_requires=[
-        'cryptography>=3.4.7',
-        'paramiko>=2.8.1',  # For SSH support
-        'bcrypt>=3.2.0',    # For password hashing
-        'PyJWT>=2.3.0',     # For JWT tokens
-        'argon2-cffi>=21.3.0',  # For Argon2 password hashing
-        'pynacl>=1.4.0',    # For ChaCha20 support
+        "cryptography>=41.0.0",
+        "paramiko>=3.3.1",
+        "python-dateutil>=2.8.2",
+        "requests>=2.31.0",
+        "typing-extensions>=4.7.1",
     ],
     extras_require={
         "dev": [
             "pytest>=7.0.0",
-            "pytest-cov>=2.12.1",
-            "pytest-benchmark>=4.0.0",  # For performance testing
-            "black>=22.3.0",
-            "isort>=5.10.1",
-            "mypy>=0.950",
-            "flake8>=4.0.1",
+            "pytest-cov>=4.0.0",
+            "pytest-asyncio>=0.21.0",
+            "black>=23.7.0",
+            "isort>=5.12.0",
+            "mypy>=1.5.0",
+            "flake8>=6.1.0",
+            "bandit>=1.7.5",
         ],
         "docs": [
             "sphinx>=4.0.2",
