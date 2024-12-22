@@ -196,6 +196,14 @@ class QueryBuilder:
             "to": (page - 1) * per_page + len(results),
         }
 
+    def get(self):
+        """Execute the query and return results"""
+        return self._table.all()
+
+    def __len__(self):
+        """Return the number of results"""
+        return len(self.get())
+
 
 class Table:
     """Enhanced table interface"""
@@ -281,6 +289,19 @@ class Table:
         """Delete all records"""
         self.query().delete()
 
+    def select(self, *fields):
+        """Select records from the table"""
+        query_builder = self.query()
+        if fields:
+            query_builder.select(*fields)
+        return query_builder.get()
+
+    def where(self, **conditions):
+        """Filter records by conditions"""
+        query_builder = self.query()
+        query_builder.where(**conditions)
+        return query_builder
+
 
 class ValtDB:
     """Main ValtDB interface with enhanced features"""
@@ -314,8 +335,15 @@ class ValtDB:
             raise ValtDBError("No database selected")
 
         if schema:
-            schema_obj = self._create_schema(schema)
-            table = self.current_db.create_table(name, schema_obj)
+            # Convert schema to a dictionary of field types
+            schema_dict = {}
+            for name, config in schema.items():
+                if isinstance(config, str):
+                    schema_dict[name] = config
+                elif isinstance(config, dict):
+                    schema_dict[name] = config.get('type', config.get('field_type', 'str'))
+        
+            table = self.current_db.table(name, schema_dict)
         else:
             table = self.current_db.get_table(name)
 
@@ -340,6 +368,12 @@ class ValtDB:
                 )
             fields.append(field)
         return Schema(fields)
+
+    def tables(self):
+        """Get list of tables in the current database"""
+        if not self.current_db:
+            raise ValtDBError("No database selected")
+        return list(self.current_db._tables.keys())
 
     def transaction(self):
         """Start database transaction"""
