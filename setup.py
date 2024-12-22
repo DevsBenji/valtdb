@@ -18,7 +18,6 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/DevsBenji/valtdb",
     project_urls={
-        "Documentation": "https://valtdb.readthedocs.io/",
         "Bug Tracker": "https://github.com/DevsBenji/valtdb/issues",
     },
     packages=find_packages(),
