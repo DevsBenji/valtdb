@@ -1,20 +1,20 @@
 """
 Authentication and authorization for ValtDB
 """
-from typing import Optional, Dict, Any, List
-import jwt
-import bcrypt
+
 import secrets
 from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+
+import bcrypt
+import jwt
+
 from .exceptions import ValtDBError
+
 
 class User:
     def __init__(
-        self,
-        username: str,
-        password_hash: str,
-        roles: List[str] = None,
-        is_active: bool = True
+        self, username: str, password_hash: str, roles: List[str] = None, is_active: bool = True
     ):
         self.username = username
         self.password_hash = password_hash
@@ -22,7 +22,7 @@ class User:
         self.is_active = is_active
 
     @classmethod
-    def create(cls, username: str, password: str, roles: List[str] = None) -> 'User':
+    def create(cls, username: str, password: str, roles: List[str] = None) -> "User":
         """Create new user with hashed password"""
         password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
         return cls(username, password_hash.decode(), roles)
@@ -37,13 +37,14 @@ class User:
             "username": self.username,
             "password_hash": self.password_hash,
             "roles": self.roles,
-            "is_active": self.is_active
+            "is_active": self.is_active,
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'User':
+    def from_dict(cls, data: Dict[str, Any]) -> "User":
         """Create user from dictionary"""
         return cls(**data)
+
 
 class AuthManager:
     def __init__(self, secret_key: Optional[str] = None):
@@ -55,7 +56,7 @@ class AuthManager:
         """Add new user"""
         if username in self.users:
             raise ValtDBError(f"User {username} already exists")
-        
+
         user = User.create(username, password, roles)
         self.users[username] = user
         return user
@@ -79,7 +80,7 @@ class AuthManager:
         payload = {
             "sub": username,
             "roles": user.roles,
-            "exp": datetime.utcnow() + timedelta(hours=24)
+            "exp": datetime.utcnow() + timedelta(hours=24),
         }
         return jwt.encode(payload, self.secret_key, algorithm="HS256")
 
@@ -110,10 +111,12 @@ class AuthManager:
             return False
         return required_role in payload.get("roles", [])
 
+
 class Permission:
     def __init__(self, name: str, description: str = ""):
         self.name = name
         self.description = description
+
 
 class Role:
     def __init__(self, name: str, permissions: List[Permission] = None):
@@ -123,6 +126,7 @@ class Role:
     def has_permission(self, permission: str) -> bool:
         """Check if role has permission"""
         return any(p.name == permission for p in self.permissions)
+
 
 class RBAC:
     def __init__(self):
@@ -141,14 +145,14 @@ class RBAC:
         """Add new role"""
         if name in self.roles:
             raise ValtDBError(f"Role {name} already exists")
-        
+
         role_permissions = []
         if permissions:
             for perm_name in permissions:
                 if perm_name not in self.permissions:
                     raise ValtDBError(f"Permission {perm_name} not found")
                 role_permissions.append(self.permissions[perm_name])
-        
+
         role = Role(name, role_permissions)
         self.roles[name] = role
         return role
@@ -165,7 +169,7 @@ class RBAC:
             raise ValtDBError(f"Role {role_name} not found")
         if permission_name not in self.permissions:
             raise ValtDBError(f"Permission {permission_name} not found")
-            
+
         role = self.roles[role_name]
         permission = self.permissions[permission_name]
         if permission not in role.permissions:
@@ -175,6 +179,6 @@ class RBAC:
         """Revoke permission from role"""
         if role_name not in self.roles:
             raise ValtDBError(f"Role {role_name} not found")
-            
+
         role = self.roles[role_name]
         role.permissions = [p for p in role.permissions if p.name != permission_name]

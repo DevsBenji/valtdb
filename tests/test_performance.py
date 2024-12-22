@@ -1,19 +1,24 @@
 """
 Performance tests for ValtDB
 """
-import pytest
-import time
+
 import random
 import string
+import time
+
+import pytest
+
 from valtdb import Database
-from valtdb.schema import Schema, SchemaField, DataType
-from valtdb.query import Query, Operator
-from valtdb.ssh import SSHConfig, RemoteDatabase
-from valtdb.auth import AuthManager, RBAC
+from valtdb.auth import RBAC, AuthManager
+from valtdb.query import Operator, Query
+from valtdb.schema import DataType, Schema, SchemaField
+from valtdb.ssh import RemoteDatabase, SSHConfig
+
 
 def generate_random_string(length=10):
     """Generate random string"""
-    return ''.join(random.choices(string.ascii_letters, k=length))
+    return "".join(random.choices(string.ascii_letters, k=length))
+
 
 def generate_test_data(n=1000):
     """Generate test data"""
@@ -24,29 +29,34 @@ def generate_test_data(n=1000):
             "age": random.randint(18, 80),
             "salary": random.uniform(30000, 120000),
             "department": random.choice(["IT", "HR", "Sales", "Marketing"]),
-            "status": random.choice(["active", "inactive"])
+            "status": random.choice(["active", "inactive"]),
         }
         for i in range(n)
     ]
 
+
 @pytest.fixture
 def test_db():
     """Create test database"""
-    schema = Schema([
-        SchemaField("id", DataType.INT, unique=True),
-        SchemaField("name", DataType.STR),
-        SchemaField("age", DataType.INT),
-        SchemaField("salary", DataType.FLOAT),
-        SchemaField("department", DataType.STR),
-        SchemaField("status", DataType.STR)
-    ])
-    
+    schema = Schema(
+        [
+            SchemaField("id", DataType.INT, unique=True),
+            SchemaField("name", DataType.STR),
+            SchemaField("age", DataType.INT),
+            SchemaField("salary", DataType.FLOAT),
+            SchemaField("department", DataType.STR),
+            SchemaField("status", DataType.STR),
+        ]
+    )
+
     db = Database("test_db")
     table = db.create_table("employees", schema)
     return table
 
+
 def benchmark(func):
     """Benchmark decorator"""
+
     def wrapper(*args, **kwargs):
         start_time = time.time()
         result = func(*args, **kwargs)
@@ -54,7 +64,9 @@ def benchmark(func):
         duration = end_time - start_time
         print(f"{func.__name__}: {duration:.4f} seconds")
         return result, duration
+
     return wrapper
+
 
 @benchmark
 def test_bulk_insert(table, data):
@@ -62,10 +74,12 @@ def test_bulk_insert(table, data):
     for row in data:
         table.insert(row)
 
+
 @benchmark
 def test_simple_query(table):
     """Test simple query performance"""
     return table.select(Query().filter("department", Operator.EQ, "IT"))
+
 
 @benchmark
 def test_complex_query(table):
@@ -79,16 +93,15 @@ def test_complex_query(table):
         .limit(100)
     )
 
+
 @benchmark
 def test_aggregation(table):
     """Test aggregation performance"""
     return table.aggregate(
         group_by=["department"],
-        aggregations={
-            "salary": ["avg", "min", "max"],
-            "age": ["avg", "count"]
-        }
+        aggregations={"salary": ["avg", "min", "max"], "age": ["avg", "count"]},
     )
+
 
 @benchmark
 def test_index_query(table):
@@ -96,23 +109,23 @@ def test_index_query(table):
     table.create_index("salary_idx", "salary")
     return table.select(Query().filter("salary", Operator.GT, 50000))
 
+
 @benchmark
 def test_compound_index_query(table):
     """Test compound index query performance"""
     table.create_compound_index("dept_salary_idx", ["department", "salary"])
     return table.select(
-        Query()
-        .filter("department", Operator.EQ, "IT")
-        .filter("salary", Operator.GT, 50000)
+        Query().filter("department", Operator.EQ, "IT").filter("salary", Operator.GT, 50000)
     )
+
 
 def test_performance_suite(test_db):
     """Run complete performance test suite"""
     print("\nRunning performance tests...")
-    
+
     # Generate test data
     data = generate_test_data(10000)
-    
+
     # Run tests
     insert_result, insert_time = test_bulk_insert(test_db, data)
     simple_result, simple_time = test_simple_query(test_db)
@@ -120,7 +133,7 @@ def test_performance_suite(test_db):
     agg_result, agg_time = test_aggregation(test_db)
     index_result, index_time = test_index_query(test_db)
     compound_result, compound_time = test_compound_index_query(test_db)
-    
+
     # Print summary
     print("\nPerformance Summary:")
     print(f"{'Operation':<25} {'Time (seconds)':<15} {'Records':<10}")
@@ -132,66 +145,63 @@ def test_performance_suite(test_db):
     print(f"{'Indexed Query':<25} {index_time:<15.4f} {len(index_result[0]):<10}")
     print(f"{'Compound Index Query':<25} {compound_time:<15.4f} {len(compound_result[0]):<10}")
 
+
 @pytest.mark.benchmark
 def test_encryption_performance(test_db):
     """Test encryption performance"""
     print("\nTesting encryption performance...")
-    
+
     # Create schema with encrypted fields
-    schema = Schema([
-        SchemaField("id", DataType.INT),
-        SchemaField("name", DataType.ENCRYPTED_STR),
-        SchemaField("salary", DataType.ENCRYPTED_FLOAT)
-    ])
-    
+    schema = Schema(
+        [
+            SchemaField("id", DataType.INT),
+            SchemaField("name", DataType.ENCRYPTED_STR),
+            SchemaField("salary", DataType.ENCRYPTED_FLOAT),
+        ]
+    )
+
     db = Database("encrypted_db", keypair=generate_keypair())
     table = db.create_table("secure_employees", schema)
-    
+
     # Test encrypted operations
     @benchmark
     def test_encrypted_insert():
-        return table.insert({
-            "id": 1,
-            "name": "John Doe",
-            "salary": 50000.0
-        })
-    
+        return table.insert({"id": 1, "name": "John Doe", "salary": 50000.0})
+
     @benchmark
     def test_encrypted_query():
         return table.select(Query().filter("id", Operator.EQ, 1))
-    
+
     insert_result, insert_time = test_encrypted_insert()
     query_result, query_time = test_encrypted_query()
-    
+
     print("\nEncryption Performance:")
     print(f"{'Operation':<25} {'Time (seconds)':<15}")
     print("-" * 40)
     print(f"{'Encrypted Insert':<25} {insert_time:<15.4f}")
     print(f"{'Encrypted Query':<25} {query_time:<15.4f}")
 
+
 @pytest.mark.benchmark
 def test_remote_performance():
     """Test remote database performance"""
     print("\nTesting remote database performance...")
-    
+
     # Setup SSH config (using mock for testing)
-    ssh_config = SSHConfig(
-        hostname="localhost",
-        username="test",
-        password="test"
-    )
-    
+    ssh_config = SSHConfig(hostname="localhost", username="test", password="test")
+
     @benchmark
     def test_remote_connection():
         with RemoteDatabase(ssh_config, "/tmp/test.db") as remote_db:
             return remote_db.execute_query("SELECT * FROM test")
-    
+
     conn_result, conn_time = test_remote_connection()
-    
+
     print("\nRemote Operation Performance:")
     print(f"{'Operation':<25} {'Time (seconds)':<15}")
     print("-" * 40)
     print(f"{'Remote Query':<25} {conn_time:<15.4f}")
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

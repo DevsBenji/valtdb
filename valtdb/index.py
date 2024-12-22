@@ -1,9 +1,11 @@
 """
 Index management for ValtDB
 """
-from typing import Any, Dict, List, Optional, Set
-from collections import defaultdict
+
 import bisect
+from collections import defaultdict
+from typing import Any, Dict, List, Optional, Set
+
 
 class Index:
     def __init__(self, name: str, field: str, unique: bool = False):
@@ -16,7 +18,7 @@ class Index:
         """Add value to index"""
         if self.unique and value in self._index:
             raise ValueError(f"Duplicate value for unique index {self.name}: {value}")
-        
+
         bisect.insort(self._index[value], row_id)
 
     def remove(self, value: Any, row_id: int):
@@ -51,6 +53,7 @@ class Index:
         """Clear index"""
         self._index.clear()
 
+
 class CompoundIndex(Index):
     def __init__(self, name: str, fields: List[str], unique: bool = False):
         super().__init__(name, ",".join(fields), unique)
@@ -81,6 +84,7 @@ class CompoundIndex(Index):
         key = self._make_key(values)
         return super().find(key)
 
+
 class IndexManager:
     def __init__(self):
         self.indexes: Dict[str, Index] = {}
@@ -89,16 +93,18 @@ class IndexManager:
         """Create new index"""
         if name in self.indexes:
             raise ValueError(f"Index {name} already exists")
-            
+
         index = Index(name, field, unique)
         self.indexes[name] = index
         return index
 
-    def create_compound_index(self, name: str, fields: List[str], unique: bool = False) -> CompoundIndex:
+    def create_compound_index(
+        self, name: str, fields: List[str], unique: bool = False
+    ) -> CompoundIndex:
         """Create new compound index"""
         if name in self.indexes:
             raise ValueError(f"Index {name} already exists")
-            
+
         index = CompoundIndex(name, fields, unique)
         self.indexes[name] = index
         return index
@@ -116,7 +122,7 @@ class IndexManager:
         """Rebuild all indexes"""
         for index in self.indexes.values():
             index.clear()
-            
+
             if isinstance(index, CompoundIndex):
                 for i, row in enumerate(data):
                     values = [row.get(field) for field in index.fields]

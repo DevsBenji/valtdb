@@ -1,9 +1,11 @@
-import unittest
 import os
 import tempfile
+import unittest
+
 from valtdb import Database
 from valtdb.crypto import generate_keypair
 from valtdb.exceptions import ValtDBError
+
 
 class TestDatabase(unittest.TestCase):
     def setUp(self):
@@ -32,19 +34,15 @@ class TestDatabase(unittest.TestCase):
 
     def test_encrypted_table(self):
         """Test encrypted table operations"""
-        schema = {
-            "id": "int",
-            "name": "encrypted_str",
-            "salary": "encrypted_int"
-        }
+        schema = {"id": "int", "name": "encrypted_str", "salary": "encrypted_int"}
         table = self.db.create_table("employees", schema)
-        
+
         # Test data
         test_data = {"id": 1, "name": "John Doe", "salary": 50000}
-        
+
         # Insert
         table.insert(test_data)
-        
+
         # Select
         result = table.select({"id": 1})[0]
         self.assertEqual(result["name"], test_data["name"])
@@ -54,10 +52,10 @@ class TestDatabase(unittest.TestCase):
         """Test data integrity checking"""
         schema = {"id": "int", "name": "str"}
         table = self.db.create_table("integrity_test", schema)
-        
+
         # Insert test data
         table.insert({"id": 1, "name": "Test"})
-        
+
         # Verify data can be retrieved
         result = table.select({"id": 1})[0]
         self.assertEqual(result["name"], "Test")
@@ -72,25 +70,26 @@ class TestDatabase(unittest.TestCase):
         """Test basic table operations"""
         schema = {"id": "int", "name": "str"}
         table = self.db.create_table("ops_test", schema)
-        
+
         # Insert
         table.insert({"id": 1, "name": "Test1"})
         table.insert({"id": 2, "name": "Test2"})
-        
+
         # Select
         results = table.select({"name": "Test1"})
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["id"], 1)
-        
+
         # Update
         table.update({"id": 1}, {"name": "Updated"})
         result = table.select({"id": 1})[0]
         self.assertEqual(result["name"], "Updated")
-        
+
         # Delete
         table.delete({"id": 1})
         results = table.select({"id": 1})
         self.assertEqual(len(results), 0)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

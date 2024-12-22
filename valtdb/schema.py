@@ -1,9 +1,12 @@
 """
 Schema validation and management for ValtDB
 """
-from typing import Any, Dict, List, Optional, Union
+
 from enum import Enum
+from typing import Any, Dict, List, Optional, Union
+
 from .exceptions import ValtDBError
+
 
 class DataType(Enum):
     INT = "int"
@@ -16,6 +19,7 @@ class DataType(Enum):
     ENCRYPTED_FLOAT = "encrypted_float"
     ENCRYPTED_STR = "encrypted_str"
     ENCRYPTED_DICT = "encrypted_dict"
+
 
 class SchemaField:
     def __init__(
@@ -32,14 +36,14 @@ class SchemaField:
         max_length: Optional[int] = None,
         pattern: Optional[str] = None,
         choices: Optional[List[Any]] = None,
-        encrypted: bool = False
+        encrypted: bool = False,
     ):
         # Prefer field_type, but fall back to data_type for backward compatibility
         self.name = name
         self.field_type = field_type or data_type
         if self.field_type is None:
             raise ValtDBError(f"Field type must be specified for field {name}")
-        
+
         # If encrypted flag is set, modify field type to encrypted variant
         if encrypted:
             encrypted_type_name = f"ENCRYPTED_{self.field_type.name.lower()}"
@@ -48,7 +52,7 @@ class SchemaField:
             except KeyError:
                 # If specific encrypted type doesn't exist, use a generic encrypted type
                 self.field_type = DataType.ENCRYPTED_STR
-        
+
         self.required = required
         self.unique = unique
         self.default = default
@@ -72,11 +76,11 @@ class SchemaField:
             "min_length": self.min_length,
             "max_length": self.max_length,
             "pattern": self.pattern,
-            "choices": self.choices
+            "choices": self.choices,
         }
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'SchemaField':
+    def from_dict(cls, data: Dict) -> "SchemaField":
         """Create field from dictionary"""
         return cls(
             name=data["name"],
@@ -89,13 +93,14 @@ class SchemaField:
             min_length=data.get("min_length"),
             max_length=data.get("max_length"),
             pattern=data.get("pattern"),
-            choices=data.get("choices")
+            choices=data.get("choices"),
         )
+
 
 class Schema:
     def __init__(self, schema_data: Union[List[SchemaField], Dict[str, str]]):
         """Initialize schema.
-        
+
         Args:
             schema_data: Either a list of SchemaField objects or a dictionary mapping field names to types
         """
@@ -120,7 +125,7 @@ class Schema:
     def validate_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Validate data against schema"""
         validated = {}
-        
+
         # Check required fields
         for name, field in self.fields.items():
             if field.required and name not in data:
@@ -133,7 +138,7 @@ class Schema:
         for name, value in data.items():
             if name not in self.fields:
                 raise ValtDBError(f"Unknown field '{name}'")
-                
+
             field = self.fields[name]
             validated[name] = self._validate_field(field, value)
 
@@ -182,6 +187,7 @@ class Schema:
         # Pattern validation
         if field.pattern and isinstance(value, str):
             import re
+
             if not re.match(field.pattern, value):
                 raise ValtDBError(f"Field '{field.name}' does not match pattern {field.pattern}")
 
@@ -193,13 +199,12 @@ class Schema:
 
     def to_dict(self) -> Dict:
         """Convert schema to dictionary"""
-        return {
-            name: field.to_dict() for name, field in self.fields.items()
-        }
+        return {name: field.to_dict() for name, field in self.fields.items()}
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'Schema':
+    def from_dict(cls, data: Dict) -> "Schema":
         """Create schema from dictionary"""
-        fields = [SchemaField.from_dict({**field_data, "name": name})
-                 for name, field_data in data.items()]
+        fields = [
+            SchemaField.from_dict({**field_data, "name": name}) for name, field_data in data.items()
+        ]
         return cls(fields)

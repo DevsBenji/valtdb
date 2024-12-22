@@ -1,33 +1,36 @@
 """
 ValtDB API Module - Enhanced Query Interface
 """
-from typing import Any, Dict, List, Optional, Union, Tuple, Callable, Set
-from datetime import datetime, date
+
 import json
 import logging
-from pathlib import Path
 import os
 import shutil
-from functools import wraps
+from datetime import date, datetime
 from enum import Enum
+from functools import wraps
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
+from .auth import RBAC, AuthManager
+from .crypto.encryption import EncryptionAlgorithm, EncryptionManager, HashAlgorithm
 from .database import Database
-from .schema import Schema, SchemaField, DataType
-from .query import Query, Operator
-from .crypto.encryption import EncryptionManager, EncryptionAlgorithm, HashAlgorithm
-from .auth import AuthManager, RBAC
-from .ssh import SSHConfig, RemoteDatabase
 from .exceptions import ValtDBError
+from .query import Operator, Query
+from .schema import DataType, Schema, SchemaField
+from .ssh import RemoteDatabase, SSHConfig
 
 logger = logging.getLogger(__name__)
+
 
 class SortOrder(Enum):
     ASC = "ASC"
     DESC = "DESC"
 
+
 class QueryBuilder:
     """Enhanced query builder with intuitive methods"""
-    
+
     def __init__(self, table):
         self._table = table
         self._query = Query()
@@ -38,12 +41,12 @@ class QueryBuilder:
         self._offset = None
         self._joins = []
 
-    def select(self, *fields) -> 'QueryBuilder':
+    def select(self, *fields) -> "QueryBuilder":
         """Select specific fields"""
         self._selected_fields.update(fields)
         return self
 
-    def where(self, **conditions) -> 'QueryBuilder':
+    def where(self, **conditions) -> "QueryBuilder":
         """Add WHERE conditions"""
         for field, value in conditions.items():
             if isinstance(value, tuple):
@@ -53,37 +56,37 @@ class QueryBuilder:
                 self._query.filter(field, Operator.EQ, value)
         return self
 
-    def where_in(self, field: str, values: List[Any]) -> 'QueryBuilder':
+    def where_in(self, field: str, values: List[Any]) -> "QueryBuilder":
         """Add WHERE IN condition"""
         self._query.filter(field, Operator.IN, values)
         return self
 
-    def where_not_in(self, field: str, values: List[Any]) -> 'QueryBuilder':
+    def where_not_in(self, field: str, values: List[Any]) -> "QueryBuilder":
         """Add WHERE NOT IN condition"""
         self._query.filter(field, Operator.NOT_IN, values)
         return self
 
-    def where_between(self, field: str, start: Any, end: Any) -> 'QueryBuilder':
+    def where_between(self, field: str, start: Any, end: Any) -> "QueryBuilder":
         """Add WHERE BETWEEN condition"""
         self._query.filter(field, Operator.BETWEEN, (start, end))
         return self
 
-    def where_null(self, field: str) -> 'QueryBuilder':
+    def where_null(self, field: str) -> "QueryBuilder":
         """Add WHERE IS NULL condition"""
         self._query.filter(field, Operator.IS_NULL, None)
         return self
 
-    def where_not_null(self, field: str) -> 'QueryBuilder':
+    def where_not_null(self, field: str) -> "QueryBuilder":
         """Add WHERE IS NOT NULL condition"""
         self._query.filter(field, Operator.IS_NOT_NULL, None)
         return self
 
-    def where_like(self, field: str, pattern: str) -> 'QueryBuilder':
+    def where_like(self, field: str, pattern: str) -> "QueryBuilder":
         """Add WHERE LIKE condition"""
         self._query.filter(field, Operator.LIKE, pattern)
         return self
 
-    def or_where(self, **conditions) -> 'QueryBuilder':
+    def or_where(self, **conditions) -> "QueryBuilder":
         """Add OR WHERE conditions"""
         for field, value in conditions.items():
             if isinstance(value, tuple):
@@ -93,32 +96,32 @@ class QueryBuilder:
                 self._query.or_filter(field, Operator.EQ, value)
         return self
 
-    def group_by(self, *fields) -> 'QueryBuilder':
+    def group_by(self, *fields) -> "QueryBuilder":
         """Add GROUP BY clause"""
         self._group_by.extend(fields)
         return self
 
-    def order_by(self, field: str, order: SortOrder = SortOrder.ASC) -> 'QueryBuilder':
+    def order_by(self, field: str, order: SortOrder = SortOrder.ASC) -> "QueryBuilder":
         """Add ORDER BY clause"""
         self._order_by.append((field, order))
         return self
 
-    def limit(self, limit: int) -> 'QueryBuilder':
+    def limit(self, limit: int) -> "QueryBuilder":
         """Add LIMIT clause"""
         self._limit = limit
         return self
 
-    def offset(self, offset: int) -> 'QueryBuilder':
+    def offset(self, offset: int) -> "QueryBuilder":
         """Add OFFSET clause"""
         self._offset = offset
         return self
 
-    def join(self, table: str, on: Dict[str, str]) -> 'QueryBuilder':
+    def join(self, table: str, on: Dict[str, str]) -> "QueryBuilder":
         """Add JOIN clause"""
         self._joins.append(("JOIN", table, on))
         return self
 
-    def left_join(self, table: str, on: Dict[str, str]) -> 'QueryBuilder':
+    def left_join(self, table: str, on: Dict[str, str]) -> "QueryBuilder":
         """Add LEFT JOIN clause"""
         self._joins.append(("LEFT JOIN", table, on))
         return self
@@ -176,24 +179,27 @@ class QueryBuilder:
             callback(results)
             offset += size
 
-    def paginate(self, page: int = 1, per_page: int = 10) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    def paginate(
+        self, page: int = 1, per_page: int = 10
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """Get paginated results"""
         total = self.count()
-        
+
         results = self.limit(per_page).offset((page - 1) * per_page).get()
-        
+
         return results, {
             "total": total,
             "per_page": per_page,
             "current_page": page,
             "last_page": (total + per_page - 1) // per_page,
             "from": (page - 1) * per_page + 1,
-            "to": (page - 1) * per_page + len(results)
+            "to": (page - 1) * per_page + len(results),
         }
+
 
 class Table:
     """Enhanced table interface"""
-    
+
     def __init__(self, db_table, name: str):
         self._table = db_table
         self.name = name
@@ -217,12 +223,14 @@ class Table:
             raise ValtDBError(f"Record with id {id} not found")
         return result
 
-    def first_or_create(self, search: Dict[str, Any], create: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def first_or_create(
+        self, search: Dict[str, Any], create: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """Get first record or create it"""
         result = self.query().where(**search).first()
         if result:
             return result
-            
+
         data = {**search, **(create or {})}
         self.insert(data)
         return self.query().where(**search).first()
@@ -233,12 +241,14 @@ class Table:
         if result:
             self.query().where(**search).update(update)
             return self.query().where(**search).first()
-            
+
         data = {**search, **update}
         self.insert(data)
         return self.query().where(**search).first()
 
-    def insert(self, data: Union[Dict[str, Any], List[Dict[str, Any]]]) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+    def insert(
+        self, data: Union[Dict[str, Any], List[Dict[str, Any]]]
+    ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
         """Insert record(s)"""
         if isinstance(data, list):
             for record in data:
@@ -256,7 +266,7 @@ class Table:
     def bulk_insert(self, data: List[Dict[str, Any]], chunk_size: int = 1000):
         """Insert records in chunks"""
         for i in range(0, len(data), chunk_size):
-            chunk = data[i:i + chunk_size]
+            chunk = data[i : i + chunk_size]
             self.insert(chunk)
 
     def update(self, data: Dict[str, Any]) -> int:
@@ -271,9 +281,10 @@ class Table:
         """Delete all records"""
         self.query().delete()
 
+
 class ValtDB:
     """Main ValtDB interface with enhanced features"""
-    
+
     def __init__(self, path: str):
         self.base_path = Path(path)
         self.base_path.mkdir(parents=True, exist_ok=True)
@@ -281,20 +292,20 @@ class ValtDB:
         self.current_table = None
         self._encryption = None
 
-    def db(self, name: str, encryption: Optional[Dict] = None) -> 'ValtDB':
+    def db(self, name: str, encryption: Optional[Dict] = None) -> "ValtDB":
         """Select or create database"""
         db_path = self.base_path / name
-        
+
         if not db_path.exists():
             if encryption:
                 self._encryption = EncryptionManager(
                     encryption_algorithm=EncryptionAlgorithm[encryption.get("algorithm", "AES")],
-                    hash_algorithm=HashAlgorithm[encryption.get("hash_algorithm", "SHA256")]
+                    hash_algorithm=HashAlgorithm[encryption.get("hash_algorithm", "SHA256")],
                 )
             self.current_db = Database(str(db_path), encryption_manager=self._encryption)
         else:
             self.current_db = Database(str(db_path))
-        
+
         return self
 
     def table(self, name: str, schema: Optional[Dict] = None) -> Table:
@@ -325,7 +336,7 @@ class ValtDB:
                     unique=config.get("unique", False),
                     encrypted=config.get("encrypted", False),
                     default=config.get("default"),
-                    choices=config.get("choices")
+                    choices=config.get("choices"),
                 )
             fields.append(field)
         return Schema(fields)
@@ -338,17 +349,17 @@ class ValtDB:
         """Backup database"""
         if not self.current_db:
             raise ValtDBError("No database selected")
-            
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_file = f"{path}/backup_{timestamp}.db"
         self.current_db.backup(backup_file)
         return backup_file
 
-    def restore(self, backup_file: str) -> 'ValtDB':
+    def restore(self, backup_file: str) -> "ValtDB":
         """Restore database from backup"""
         if not self.current_db:
             raise ValtDBError("No database selected")
-            
+
         self.current_db.restore(backup_file)
         return self
 
@@ -356,8 +367,9 @@ class ValtDB:
         """Execute raw query"""
         if not self.current_db:
             raise ValtDBError("No database selected")
-            
+
         return self.current_db.execute_query(query, params)
+
 
 # Usage Examples:
 """

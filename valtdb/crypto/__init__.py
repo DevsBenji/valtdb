@@ -1,12 +1,12 @@
 """Cryptographic utilities for ValtDB."""
 
 from .encryption import (
+    EncryptionAlgorithm,
+    HashAlgorithm,
     KeyPair,
-    encrypt_data,
     decrypt_data,
+    encrypt_data,
     generate_keypair,
     hash_data,
     verify_hash,
-    EncryptionAlgorithm,
-    HashAlgorithm
 )

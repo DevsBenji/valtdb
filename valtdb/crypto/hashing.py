@@ -2,6 +2,7 @@ import hashlib
 import json
 from typing import Any, Union
 
+
 def hash_data(data: Any) -> str:
     """
     Create SHA256 hash of data.
@@ -11,8 +12,9 @@ def hash_data(data: Any) -> str:
         data_bytes = data
     else:
         data_bytes = json.dumps(data, sort_keys=True).encode()
-    
+
     return hashlib.sha256(data_bytes).hexdigest()
+
 
 def verify_hash(data: Any, hash_value: str) -> bool:
     """Verify if data matches the provided hash."""
