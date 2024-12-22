@@ -44,9 +44,9 @@
 ## Процесс разработки
 
 1. Убедитесь, что ваши изменения соответствуют целям проекта
-2. Напишите тесты для новой функциональности
+2. Напишите тесты для новой функциональности, особенно для методов, связанных с SSH и базой данных.
 3. Убедитесь, что все тесты проходят
-4. Обновите документацию
+4. Обновите документацию, включая README.md и CONTRIBUTING.md
 5. Создайте pull request
 
 ## Стиль кода
@@ -176,7 +176,7 @@ def having(self, field: str, condition: Tuple[str, Any]) -> "QueryBuilder":
         Self для цепочки методов
         
     Example:
-        >>> query.group_by("department")\\
+        >>> query.group_by("department")\
         ...     .having("employee_count", ("GT", 5))
     """
     operator, value = condition
@@ -299,8 +299,8 @@ def paginate(
         ValtDBError: Если page < 1 или per_page < 1
         
     Example:
-        >>> results, meta = users.query()\\
-        ...     .where(status="active")\\
+        >>> results, meta = users.query()\
+        ...     .where(status="active")\
         ...     .paginate(page=2, per_page=15)
         >>> print(f"Showing {meta['from']} to {meta['to']} of {meta['total']}")
     """
@@ -374,8 +374,8 @@ users = db.db("test").table("users", {
 })
 
 # Код, вызывающий проблему
-result = users.query()\\
-    .where(id=1)\\
+result = users.query()\
+    .where(id=1)\
     .get()
 ```
 

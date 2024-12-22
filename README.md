@@ -275,6 +275,23 @@ results = db.execute(
 )
 ```
 
+## Обновления API
+
+### Новые возможности
+- Добавлен метод `exec_command` для выполнения команд через SSH.
+- Поддержка новых параметров в методах работы с базой данных.
+
+### Примеры использования
+
+#### Выполнение команды через SSH
+```python
+from valtdb.ssh import SSHConnection
+
+connection = SSHConnection(host='example.com', username='user', password='pass')
+result = connection.exec_command('ls -la')
+print(result)
+```
+
 ## Вклад в проект
 
 Мы приветствуем вклад в развитие ValtDB! Пожалуйста, ознакомьтесь с [руководством по внесению изменений](CONTRIBUTING.md).
