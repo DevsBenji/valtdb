@@ -1,46 +1,34 @@
 """
-Encryption and hashing utilities for ValtDB
+Encryption and decryption utilities for ValtDB.
 """
-from typing import Optional, Union, Dict, Any
-from enum import Enum
-import os
-import base64
-import hashlib
+import json
 import ast
-from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from enum import Enum
+from typing import Any, Dict, Union
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
-from cryptography.hazmat.primitives import serialization
-from cryptography.exceptions import InvalidKey
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.fernet import Fernet
+from ..keypair import KeyPair
 
 class EncryptionAlgorithm(Enum):
     """Supported encryption algorithms"""
-    AES = "aes"
-    FERNET = "fernet"
     RSA = "rsa"
-    CHACHA20 = "chacha20"
 
 class HashAlgorithm(Enum):
     """Supported hash algorithms"""
     SHA256 = "sha256"
-    SHA512 = "sha512"
-    BLAKE2B = "blake2b"
-    ARGON2 = "argon2"
-    BCRYPT = "bcrypt"
 
 class KeyPair:
     """Container for asymmetric encryption keys"""
-    def __init__(self, private_key: Any, public_key: Any):
+    def __init__(self, private_key: Any = None, public_key: Any = None):
         self.private_key = private_key
         self.public_key = public_key
 
 def generate_keypair() -> KeyPair:
-    """Generate a new RSA key pair.
+    """Generate a new key pair.
     
     Returns:
-        KeyPair: A new RSA key pair
+        KeyPair: A new key pair
     """
     private_key = rsa.generate_private_key(
         public_exponent=65537,
@@ -49,112 +37,108 @@ def generate_keypair() -> KeyPair:
     public_key = private_key.public_key()
     return KeyPair(private_key, public_key)
 
-def encrypt_data(data: Union[str, bytes, Dict], key: Any) -> bytes:
-    """Encrypt data using the specified key.
+def encrypt_data(data: Union[str, Dict[str, Any]], key: Union[rsa.RSAPublicKey, bytes]) -> bytes:
+    """Encrypt data using public key or symmetric key.
     
     Args:
         data: Data to encrypt
-        key: Encryption key
+        key: Public key or symmetric key to use for encryption
     
     Returns:
         bytes: Encrypted data
     """
     if isinstance(data, dict):
-        data = str(data).encode()
-    elif isinstance(data, str):
-        data = data.encode()
+        data = json.dumps(data)
+    elif not isinstance(data, str):
+        data = str(data)
+    
+    data_bytes = data.encode()
     
     if isinstance(key, rsa.RSAPublicKey):
-        return key.encrypt(
-            data,
+        # For RSA, we need to use symmetric encryption for large data
+        fernet_key = Fernet.generate_key()
+        fernet = Fernet(fernet_key)
+        
+        # Encrypt data with Fernet
+        encrypted_data = fernet.encrypt(data_bytes)
+        
+        # Encrypt Fernet key with RSA
+        encrypted_key = key.encrypt(
+            fernet_key,
             padding.OAEP(
                 mgf=padding.MGF1(algorithm=hashes.SHA256()),
                 algorithm=hashes.SHA256(),
                 label=None
             )
         )
+        
+        # Combine encrypted key and data
+        return encrypted_key + b":" + encrypted_data
     else:
+        # For symmetric encryption, just use Fernet directly
         fernet = Fernet(key)
-        return fernet.encrypt(data)
+        return fernet.encrypt(data_bytes)
 
-def decrypt_data(encrypted_data: bytes, key: Any) -> Union[str, Dict]:
-    """Decrypt data using the specified key.
+def decrypt_data(encrypted_data: bytes, key: Union[rsa.RSAPrivateKey, bytes]) -> Union[str, Dict[str, Any]]:
+    """Decrypt data using private key or symmetric key.
     
     Args:
-        encrypted_data: Data to decrypt
-        key: Decryption key
+        encrypted_data: Encrypted data
+        key: Private key or symmetric key to use for decryption
     
     Returns:
-        Union[str, Dict]: Decrypted data
+        Union[str, Dict[str, Any]]: Decrypted data
     """
     if isinstance(key, rsa.RSAPrivateKey):
-        decrypted = key.decrypt(
-            encrypted_data,
+        # Split encrypted key and data
+        encrypted_key, encrypted_content = encrypted_data.split(b":", 1)
+        
+        # Decrypt Fernet key
+        fernet_key = key.decrypt(
+            encrypted_key,
             padding.OAEP(
                 mgf=padding.MGF1(algorithm=hashes.SHA256()),
                 algorithm=hashes.SHA256(),
                 label=None
             )
         )
+        
+        # Decrypt data with Fernet
+        fernet = Fernet(fernet_key)
+        decrypted = fernet.decrypt(encrypted_content)
     else:
+        # For symmetric decryption, just use Fernet directly
         fernet = Fernet(key)
         decrypted = fernet.decrypt(encrypted_data)
     
+    decrypted_str = decrypted.decode()
     try:
-        return ast.literal_eval(decrypted.decode())
-    except (ValueError, SyntaxError):
-        return decrypted.decode()
+        return json.loads(decrypted_str)
+    except json.JSONDecodeError:
+        return decrypted_str
 
-def hash_data(data: Union[str, bytes], salt: Optional[bytes] = None) -> bytes:
-    """Hash data using SHA-256.
+def hash_data(data: Dict[str, Any]) -> str:
+    """Generate hash for data.
     
     Args:
         data: Data to hash
-        salt: Optional salt for the hash
     
     Returns:
-        bytes: Hashed data
+        str: Hash of data
     """
-    if isinstance(data, str):
-        data = data.encode()
-    
-    if salt is None:
-        salt = os.urandom(16)
-    
-    kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=32,
-        salt=salt,
-        iterations=100000,
-    )
-    
-    return salt + kdf.derive(data)
+    data_str = json.dumps(data, sort_keys=True)
+    hasher = hashes.Hash(hashes.SHA256())
+    hasher.update(data_str.encode())
+    return hasher.finalize().hex()
 
-def verify_hash(data: Union[str, bytes], hash_value: bytes) -> bool:
-    """Verify that data matches a hash.
+def verify_hash(data: Dict[str, Any], hash_value: str) -> bool:
+    """Verify hash for data.
     
     Args:
         data: Data to verify
         hash_value: Hash to verify against
     
     Returns:
-        bool: True if data matches hash
+        bool: True if hash matches, False otherwise
     """
-    if isinstance(data, str):
-        data = data.encode()
-    
-    salt = hash_value[:16]
-    stored_key = hash_value[16:]
-    
-    kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=32,
-        salt=salt,
-        iterations=100000,
-    )
-    
-    try:
-        kdf.verify(data, stored_key)
-        return True
-    except InvalidKey:
-        return False
+    return hash_data(data) == hash_value

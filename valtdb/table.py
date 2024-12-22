@@ -6,11 +6,18 @@ from .index import IndexManager
 from .crypto import encrypt_data, decrypt_data, hash_data, verify_hash
 
 class Table:
-    def __init__(self, name: str, schema: Schema, keypair=None):
+    def __init__(self, name: str, table_data: Dict[str, Any], keypair=None):
+        """Initialize table.
+        
+        Args:
+            name: Name of the table
+            table_data: Dictionary containing table data and schema
+            keypair: Optional keypair for encryption
+        """
         self.name = name
-        self.schema = schema
+        self.schema = Schema(table_data["schema"])
         self.keypair = keypair
-        self._data: List[Dict[str, Any]] = []
+        self._data: List[Dict[str, Any]] = table_data.get("data", [])
         self.index_manager = IndexManager()
         self._setup_indexes()
 

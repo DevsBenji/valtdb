@@ -78,8 +78,22 @@ class SchemaField:
         )
 
 class Schema:
-    def __init__(self, fields: List[SchemaField]):
-        self.fields = {field.name: field for field in fields}
+    def __init__(self, schema_data: Union[List[SchemaField], Dict[str, str]]):
+        """Initialize schema.
+        
+        Args:
+            schema_data: Either a list of SchemaField objects or a dictionary mapping field names to types
+        """
+        if isinstance(schema_data, dict):
+            self.fields = {}
+            for name, field_type in schema_data.items():
+                try:
+                    data_type = DataType(field_type)
+                    self.fields[name] = SchemaField(name=name, field_type=data_type)
+                except ValueError:
+                    raise ValtDBError(f"Invalid field type '{field_type}' for field '{name}'")
+        else:
+            self.fields = {field.name: field for field in schema_data}
         self._validate_schema()
 
     def _validate_schema(self):
