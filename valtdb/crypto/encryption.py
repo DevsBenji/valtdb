@@ -6,6 +6,7 @@ from enum import Enum
 import os
 import base64
 import hashlib
+import ast
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -100,8 +101,8 @@ def decrypt_data(encrypted_data: bytes, key: Any) -> Union[str, Dict]:
         decrypted = fernet.decrypt(encrypted_data)
     
     try:
-        return eval(decrypted.decode())
-    except:
+        return ast.literal_eval(decrypted.decode())
+    except (ValueError, SyntaxError):
         return decrypted.decode()
 
 def hash_data(data: Union[str, bytes], salt: Optional[bytes] = None) -> bytes:

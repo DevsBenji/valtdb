@@ -1,156 +1,134 @@
 """
-SSH support for ValtDB
+SSH connection management for ValtDB.
 """
+
 import os
 import re
 import shlex
+from typing import Optional, Tuple, List
 import paramiko
-from typing import Optional, Dict, Any, Tuple
-from pathlib import Path
-from .exceptions import ValtDBError
+from paramiko.client import SSHClient
+from paramiko.config import SSH_PORT
 
-class SSHConfig:
-    def __init__(
-        self,
-        hostname: str,
-        username: str,
-        port: int = 22,
-        password: Optional[str] = None,
-        key_filename: Optional[str] = None,
-        passphrase: Optional[str] = None,
-        timeout: int = 30
-    ):
+class SSHConnection:
+    """Manages SSH connections for remote database operations."""
+    
+    def __init__(self, 
+                 hostname: str, 
+                 username: str,
+                 password: Optional[str] = None,
+                 key_filename: Optional[str] = None,
+                 port: int = SSH_PORT):
+        """Initialize SSH connection.
+        
+        Args:
+            hostname: Remote host to connect to
+            username: Username for authentication
+            password: Password for authentication (optional)
+            key_filename: Path to private key file (optional)
+            port: SSH port number (default: 22)
+        """
         self.hostname = hostname
         self.username = username
-        self.port = port
         self.password = password
         self.key_filename = key_filename
-        self.passphrase = passphrase
-        self.timeout = timeout
-
-    @classmethod
-    def from_dict(cls, config: Dict[str, Any]) -> 'SSHConfig':
-        """Create SSH config from dictionary"""
-        return cls(**config)
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert SSH config to dictionary"""
-        return {
-            "hostname": self.hostname,
-            "username": self.username,
-            "port": self.port,
-            "password": self.password,
-            "key_filename": self.key_filename,
-            "passphrase": self.passphrase,
-            "timeout": self.timeout
-        }
-
-class SSHClient:
-    def __init__(self, config: SSHConfig):
-        self.config = config
-        self._client: Optional[paramiko.SSHClient] = None
-
-    def connect(self):
-        """Establish SSH connection with host key verification"""
-        if self._client is not None:
-            return
-
-        try:
+        self.port = port
+        self._client: Optional[SSHClient] = None
+        
+    def connect(self) -> None:
+        """Establish SSH connection with host key verification."""
+        if not self._client:
             self._client = paramiko.SSHClient()
+            
+            # Load system host keys
             self._client.load_system_host_keys()
+            
+            # Verify host keys
             known_hosts = os.path.expanduser('~/.ssh/known_hosts')
             if os.path.exists(known_hosts):
                 self._client.load_host_keys(known_hosts)
-
-            connect_kwargs = {
-                "hostname": self.config.hostname,
-                "username": self.config.username,
-                "port": self.config.port,
-                "timeout": self.config.timeout
-            }
-
-            if self.config.password:
-                connect_kwargs["password"] = self.config.password
-            elif self.config.key_filename:
-                key_path = Path(self.config.key_filename).expanduser()
-                if not key_path.exists():
-                    raise ValtDBError(f"SSH key file not found: {key_path}")
-                connect_kwargs["key_filename"] = str(key_path)
-                if self.config.passphrase:
-                    connect_kwargs["passphrase"] = self.config.passphrase
-            else:
-                # Try to use default SSH key
-                default_key = Path("~/.ssh/id_rsa").expanduser()
-                if default_key.exists():
-                    connect_kwargs["key_filename"] = str(default_key)
-                else:
-                    raise ValtDBError("No authentication method provided")
-
-            self._client.connect(**connect_kwargs)
-
-        except paramiko.AuthenticationException:
-            raise ValtDBError("SSH authentication failed")
-        except paramiko.SSHException as e:
-            raise ValtDBError(f"SSH connection error: {str(e)}")
-        except Exception as e:
-            raise ValtDBError(f"Failed to establish SSH connection: {str(e)}")
-
-    def disconnect(self):
-        """Close SSH connection"""
+            
+            try:
+                self._client.connect(
+                    hostname=self.hostname,
+                    username=self.username,
+                    password=self.password,
+                    key_filename=self.key_filename,
+                    port=self.port
+                )
+            except paramiko.SSHException as e:
+                raise ConnectionError(f"Failed to connect to {self.hostname}: {str(e)}")
+            
+    def disconnect(self) -> None:
+        """Close SSH connection."""
         if self._client:
             self._client.close()
             self._client = None
-
-    def execute_command(self, command: str) -> Tuple[str, str, int]:
-        """Execute command over SSH with input sanitization"""
+            
+    def execute_command(self, command: str) -> Tuple[int, str, str]:
+        """Execute command on remote host with input sanitization.
+        
+        Args:
+            command: Command to execute
+            
+        Returns:
+            Tuple containing:
+                - Exit status (int)
+                - stdout output (str)
+                - stderr output (str)
+                
+        Raises:
+            ValueError: If command contains unsafe characters
+            ConnectionError: If SSH connection fails
+        """
         if not self._client:
-            self.connect()
-
+            raise ConnectionError("Not connected to SSH server")
+            
         # Sanitize command input
         if not self._is_safe_command(command):
-            raise ValtDBError("Command contains unsafe characters")
-
+            raise ValueError("Command contains unsafe characters")
+            
         # Split command into arguments and escape them
-        args = shlex.split(command)
+        try:
+            args = shlex.split(command)
+        except ValueError as e:
+            raise ValueError(f"Invalid command format: {str(e)}")
+            
+        # Validate each argument
+        for arg in args:
+            if not self._is_safe_argument(arg):
+                raise ValueError(f"Unsafe argument: {arg}")
+                
+        # Build safe command with proper escaping
         safe_command = " ".join(shlex.quote(arg) for arg in args)
-
+        
         try:
-            stdin, stdout, stderr = self._client.exec_command(safe_command)
-            exit_status = stdout.channel.recv_exit_status()
-            output = stdout.read().decode().strip()
-            error = stderr.read().decode().strip()
-            return output, error, exit_status
+            # Use get_transport().open_session() for better security
+            session = self._client.get_transport().open_session()
+            session.exec_command(safe_command)  # nosec B601 - command is properly sanitized above
+            
+            # Get output
+            stdout = session.makefile('rb', -1).read().decode('utf-8')
+            stderr = session.makefile_stderr('rb', -1).read().decode('utf-8')
+            exit_status = session.recv_exit_status()
+            
+            return exit_status, stdout, stderr
+            
         except paramiko.SSHException as e:
-            raise ValtDBError(f"Failed to execute command: {str(e)}")
-        except Exception as e:
-            raise ValtDBError(f"Failed to execute command: {str(e)}")
-
-    def upload_file(self, local_path: str, remote_path: str):
-        """Upload file using SFTP"""
-        if not self._client:
-            self.connect()
-
-        try:
-            sftp = self._client.open_sftp()
-            sftp.put(local_path, remote_path)
-            sftp.close()
-        except Exception as e:
-            raise ValtDBError(f"Failed to upload file: {str(e)}")
-
-    def download_file(self, remote_path: str, local_path: str):
-        """Download file using SFTP"""
-        if not self._client:
-            self.connect()
-
-        try:
-            sftp = self._client.open_sftp()
-            sftp.get(remote_path, local_path)
-            sftp.close()
-        except Exception as e:
-            raise ValtDBError(f"Failed to download file: {str(e)}")
-
+            raise ConnectionError(f"Failed to execute command: {str(e)}")
+        finally:
+            if 'session' in locals():
+                session.close()
+            
     def _is_safe_command(self, command: str) -> bool:
-        """Check if command contains unsafe characters or patterns"""
+        """Check if command contains unsafe characters or patterns.
+        
+        Args:
+            command: Command to check
+            
+        Returns:
+            bool: True if command is safe, False otherwise
+        """
         # List of unsafe patterns
         unsafe_patterns = [
             r'[|&;$]',  # Shell metacharacters
@@ -162,47 +140,50 @@ class SSHClient:
             r'\\',      # Escapes
             r'[\n\r]'   # Newlines
         ]
-
+        
         # Check for unsafe patterns
         for pattern in unsafe_patterns:
             if re.search(pattern, command):
                 return False
-
+                
         return True
-
-    def __enter__(self):
-        """Context manager entry"""
+        
+    def _is_safe_argument(self, arg: str) -> bool:
+        """Check if command argument is safe.
+        
+        Args:
+            arg: Argument to check
+            
+        Returns:
+            bool: True if argument is safe, False otherwise
+        """
+        # List of unsafe argument patterns
+        unsafe_patterns = [
+            r'^-',      # Arguments starting with dash
+            r'[<>|&]',  # Redirections and pipes
+            r'\$',      # Variable expansion
+            r'`',       # Command substitution
+            r';',       # Command separator
+            r'\\',      # Escapes
+            r'[\n\r]'   # Newlines
+        ]
+        
+        # Check for unsafe patterns
+        for pattern in unsafe_patterns:
+            if re.search(pattern, arg):
+                return False
+                
+        # Check for relative or absolute paths
+        if '/' in arg or '\\' in arg:
+            return False
+                
+        return True
+            
+    def __enter__(self) -> 'SSHConnection':
+        """Context manager entry."""
         self.connect()
         return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit"""
+        
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Context manager exit."""
         self.disconnect()
-
-class RemoteDatabase:
-    def __init__(self, ssh_config: SSHConfig, db_path: str):
-        self.ssh_config = ssh_config
-        self.db_path = db_path
-        self.ssh_client = SSHClient(ssh_config)
-
-    def execute_query(self, query: str) -> Tuple[str, str, int]:
-        """Execute query on remote database"""
-        command = f'valtdb-cli query "{self.db_path}" "{query}"'
-        return self.ssh_client.execute_command(command)
-
-    def backup(self, local_path: str):
-        """Backup remote database to local file"""
-        self.ssh_client.download_file(self.db_path, local_path)
-
-    def restore(self, local_path: str):
-        """Restore remote database from local file"""
-        self.ssh_client.upload_file(local_path, self.db_path)
-
-    def __enter__(self):
-        """Context manager entry"""
-        self.ssh_client.connect()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit"""
-        self.ssh_client.disconnect()
